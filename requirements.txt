@@ -1,0 +1,10 @@
+# Daily Rotation Scanner — Python dependencies
+# Install with:  pip install -r requirements.txt
+
+yfinance>=0.2.40
+pandas>=2.0.0
+numpy>=1.24.0
+lxml>=4.9.0          # required by pandas.read_html for Wikipedia scraping
+html5lib>=1.1        # fallback HTML parser for read_html
+requests>=2.31.0
+matplotlib>=3.7.0    # optional — for backtest_chart.png (pip install matplotlib)

@@ -1,0 +1,168 @@
+# Daily Long-Only Rotation Scanner
+
+A daily Hold/Switch decision system for a concentrated long-only portfolio.
+Run each morning before UK market open (~09:00) to get a scored ranking of
+candidates and a clear HOLD or SWITCH recommendation.
+
+---
+
+## Setup
+
+```bash
+# 1. Clone / copy this folder somewhere on your Mac
+cd daily_scanner
+
+# 2. Create a virtual environment (recommended)
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 3. Install dependencies
+pip install -r requirements.txt
+```
+
+---
+
+## Usage
+
+```bash
+# Interactive — prompts you for your current holding
+python main.py
+
+# Or pass the ticker directly
+python main.py AAPL
+
+# If you're in cash
+python main.py CASH
+```
+
+### What it does
+
+1. Fetches S&P 500 + NASDAQ-100 tickers from Wikipedia (~620 stocks)
+2. Bulk-downloads 35 days of OHLCV in one request (fast)
+3. Applies liquidity filter (avg volume ≥ 1M, price ≥ $5)
+4. Quick-scores all stocks on Momentum + Volume → keeps top 60
+5. Full-scores those 60 with all 4 signals (Event + Flow require per-ticker calls)
+6. Prints ranked table + HOLD/SWITCH decision
+7. Appends a row to `trade_log.csv`
+
+---
+
+## Output example
+
+```
+  TOP 10 CANDIDATES
+  ──────────────────────────────────────────────────────
+  Ticker    Score  Momentum Volume Event  Flow  Bar
+  ──────────────────────────────────────────────────────
+  NVDA      0.731    0.821  0.810  0.700  0.595  [██████████████░░░░░░] 0.731
+  META      0.698    0.760  0.750  0.650  0.634  [█████████████░░░░░░░] 0.698
+  AAPL      0.612    0.620  0.640  0.600  0.590  [████████████░░░░░░░░] 0.612 ◄ CURRENT
+  ...
+
+  DECISION :  *** SWITCH ***
+  → Consider switching to: NVDA  (score 0.731)
+```
+
+---
+
+## Configuration (`config.py`)
+
+| Parameter | Default | What it controls |
+|---|---|---|
+| `SWITCH_THRESHOLD` | 0.15 | How much better a candidate must be to trigger a switch |
+| `WEIGHTS` | equal (0.25 each) | Relative importance of each signal |
+| `MIN_AVG_VOLUME` | 1,000,000 | Liquidity filter (shares/day) |
+| `PRE_FILTER_TOP_N` | 60 | How many stocks get full scoring (speed vs coverage) |
+| `TOP_CANDIDATES` | 10 | Rows in the output table |
+
+---
+
+## Trade Log (`trade_log.csv`)
+
+Each run appends one row:
+
+| Date | Current_Position | Action | Switch_To | Reason | Outcome |
+|------|-----------------|--------|-----------|--------|---------|
+| 2025-01-15 | AAPL | SWITCH | NVDA | NVDA scores 0.731 vs... | +4.2% |
+
+Fill in **Outcome** at end of day. Over time this lets you identify which signals are actually predictive.
+
+---
+
+## Extending the Universe
+
+To add more tickers, edit `universe.py`. For example to add a custom watchlist:
+
+```python
+def _fetch_watchlist() -> list[str]:
+    return ["PLTR", "COIN", "RKLB", "LUNR", "SOFI"]  # your picks
+```
+
+Then add `"watchlist"` to `UNIVERSE_SOURCES` in `config.py` and register it in `_FETCHERS`.
+
+---
+
+## Automating (Phase 2)
+
+To run automatically at 08:50 UK time on weekdays, add a cron job:
+
+```bash
+crontab -e
+# Add this line:
+50 8 * * 1-5 cd /path/to/daily_scanner && /path/to/.venv/bin/python main.py AAPL >> scanner.log 2>&1
+```
+
+---
+
+## Backtesting (`backtest.py`)
+
+Simulates the Hold/Switch decision loop on real historical OHLCV data.
+
+### Quick start
+
+```bash
+# 1-year default, $10,000 starting capital
+python backtest.py
+
+# Custom date range
+python backtest.py --start 2023-01-01 --end 2024-12-31
+
+# Fast mode — top 150 stocks, runs in ~3 min
+python backtest.py --fast
+
+# Try a different switch threshold
+python backtest.py --threshold 0.10
+
+# Full options
+python backtest.py --start 2022-01-01 --capital 25000 --max-universe 400
+```
+
+### Output files
+
+| File | Contents |
+|---|---|
+| `backtest_equity.csv` | Daily portfolio value + SPY benchmark |
+| `backtest_trades.csv` | Every completed trade: ticker, entry/exit, P&L% |
+| `backtest_chart.png` | 3-panel chart: equity curve, drawdown, daily returns |
+
+### Methodology & caveats
+
+| Item | Detail |
+|---|---|
+| No lookahead bias | Signals computed from close of day `t-1`; trades execute at the open of day `t` |
+| Signals used | Momentum + Volume only — Event + Flow set to neutral 0.5 |
+| Realistic execution | Exits/entries at next-day open; overnight gap earned by the old position, not the new pick |
+| Transaction costs | 0.1% per side (a switch = sell + buy = 0.2%) |
+| Switch discipline | Min-hold + edge must persist `SWITCH_CONFIRM_DAYS` consecutive days |
+| Benchmark | SPY buy-and-hold, normalised to same starting capital |
+| Survivorship bias | Uses current index constituents — slight upward bias unavoidable |
+
+### Threshold sensitivity sweep
+
+```bash
+for t in 0.08 0.10 0.12 0.15 0.20; do
+  python backtest.py --fast --threshold $t --no-chart
+done
+```
+
+Lower threshold = more switches = more costs. Higher = fewer switches = may miss moves.
