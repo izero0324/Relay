@@ -66,3 +66,4 @@ Date,Current_Position,Action,Switch_To,Reason,Outcome
 2026-08-12,DIS,SWITCH,NBIS,Best candidate NBIS scores 0.904 vs current DIS at 0.553 (edge Δ=+0.351 exceeds threshold 0.099),
 2026-08-13,NBIS,HOLD,,"Edge to SMCI exists, but NBIS held only 0/2 scan days — min-hold enforced",
 
+2026-08-14,NBIS,HOLD,,Current NBIS scores 0.769; best candidate FOXA scores 0.823 (Δ=+0.054 ≤ threshold 0.099 — hold advantage),
