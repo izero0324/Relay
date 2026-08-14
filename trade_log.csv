@@ -61,3 +61,4 @@ Date,Current_Position,Action,Switch_To,Reason,Outcome
 2026-08-06,AMZN,HOLD,,Edge to DIS (Δ=+0.427) on scan day 1/2 — awaiting confirmation,
 2026-08-06,AMZN,HOLD,,Edge to DIS (Δ=+0.427) on scan day 1/2 — awaiting confirmation,
 2026-08-07,DIS,HOLD,,"Edge to ABNB exists, but DIS held only 0/2 scan days — min-hold enforced",
+2026-08-14,DIS,HOLD,,Current DIS scores 0.679; best candidate ALB scores 0.766 (Δ=+0.087 ≤ threshold 0.099 — hold advantage),
