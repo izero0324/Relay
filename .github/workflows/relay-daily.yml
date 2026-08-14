@@ -1,0 +1,738 @@
+name: Relay Daily Scan
+
+on:
+  # Normal NYSE trading day: 16:00 ET close -> run at 15:35 ET
+  schedule:
+    - cron: "35 15 * * 1-5"
+      timezone: "America/New_York"
+
+    # NYSE early-close day: usually 13:00 ET close -> run at 12:35 ET
+    - cron: "35 12 * * 1-5"
+      timezone: "America/New_York"
+
+  # Lets you test the workflow manually from the GitHub Actions tab.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: relay-daily-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      STATE_BRANCH: relay-state
+
+    steps:
+      # ============================================================
+      # 1. Checkout the latest code from the default branch
+      # ============================================================
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ============================================================
+      # 2. Set up Python + dependencies
+      # ============================================================
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pandas_market_calendars
+
+      # ============================================================
+      # 3. Decide whether this scheduled run should actually scan
+      #
+      # - Normal trading day: runs at 15:35 ET
+      # - Early-close day: runs at 12:35 ET
+      # - NYSE holiday: skips
+      # - Manual workflow_dispatch: always runs
+      # ============================================================
+      - name: Check NYSE trading day
+        id: market
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import datetime, timedelta
+          from zoneinfo import ZoneInfo
+
+          import pandas_market_calendars as mcal
+
+          event_name = os.environ.get("EVENT_NAME", "")
+          event_schedule = os.environ.get("EVENT_SCHEDULE", "")
+
+          if event_name == "workflow_dispatch":
+              should_run = True
+              reason = "Manual workflow run"
+          else:
+              ny_tz = ZoneInfo("America/New_York")
+              now = datetime.now(ny_tz)
+              today = now.date()
+
+              nyse = mcal.get_calendar("NYSE")
+              schedule = nyse.schedule(
+                  start_date=today,
+                  end_date=today,
+              )
+
+              if schedule.empty:
+                  should_run = False
+                  reason = f"{today} is not an NYSE trading day"
+              else:
+                  market_close = (
+                      schedule.iloc[0]["market_close"]
+                      .tz_convert("America/New_York")
+                      .to_pydatetime()
+                  )
+
+                  target = market_close - timedelta(minutes=25)
+                  expected_cron = f"35 {target.hour} * * 1-5"
+
+                  should_run = event_schedule == expected_cron
+
+                  reason = (
+                      f"NYSE close {market_close:%H:%M ET}; "
+                      f"target {target:%H:%M ET}; "
+                      f"trigger {event_schedule}"
+                  )
+
+          print(reason)
+          print(f"should_run={should_run}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(
+                  f"should_run={'true' if should_run else 'false'}\n"
+              )
+              f.write(f"reason={reason}\n")
+          PY
+
+      # ============================================================
+      # 4. Restore persistent scanner state from relay-state
+      #
+      # The branch is created automatically after the first
+      # successful scan.
+      # ============================================================
+      - name: Restore Relay state
+        if: steps.market.outputs.should_run == 'true'
+        run: |
+          echo "Looking for state branch: ${STATE_BRANCH}"
+
+          if git ls-remote \
+            --exit-code \
+            --heads origin "${STATE_BRANCH}" \
+            >/dev/null 2>&1; then
+
+            echo "Existing state branch found."
+
+            git fetch origin \
+              "${STATE_BRANCH}:refs/remotes/origin/${STATE_BRANCH}"
+
+            for FILE in scanner_state.json trade_log.csv; do
+              if git cat-file \
+                -e "origin/${STATE_BRANCH}:${FILE}" \
+                2>/dev/null; then
+
+                echo "Restoring ${FILE}"
+
+                git show \
+                  "origin/${STATE_BRANCH}:${FILE}" \
+                  > "${FILE}"
+              fi
+            done
+
+          else
+            echo "No state branch yet."
+            echo "First run will use state/history currently on main."
+          fi
+
+      # ============================================================
+      # 5. Infer the model position from the previous trade-log row
+      #
+      # Previous HOLD:
+      #   next model position = Current_Position
+      #
+      # Previous SWITCH:
+      #   next model position = Switch_To
+      #
+      # This is recommendation/model state, not broker account state.
+      # ============================================================
+      - name: Determine model position
+        id: position
+        if: steps.market.outputs.should_run == 'true'
+        run: |
+          python - <<'PY'
+          import csv
+          import os
+
+          ticker = "CASH"
+
+          if os.path.exists("trade_log.csv"):
+              with open(
+                  "trade_log.csv",
+                  newline="",
+                  encoding="utf-8",
+              ) as f:
+                  rows = list(csv.DictReader(f))
+
+              if rows:
+                  last = rows[-1]
+
+                  current = (
+                      last.get("Current_Position", "")
+                      .strip()
+                      .upper()
+                  )
+
+                  action = (
+                      last.get("Action", "")
+                      .strip()
+                      .upper()
+                  )
+
+                  switch_to = (
+                      last.get("Switch_To", "")
+                      .strip()
+                      .upper()
+                  )
+
+                  if action == "SWITCH" and switch_to:
+                      ticker = switch_to
+                  elif current:
+                      ticker = current
+
+          print(f"Resolved model position: {ticker}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"ticker={ticker}\n")
+          PY
+
+      # ============================================================
+      # 6. Run Relay
+      #
+      # stdout/stderr are saved to relay_output.txt so the same
+      # information can later be sent to Telegram and archived.
+      # ============================================================
+      - name: Run Relay scanner
+        id: relay
+        if: steps.market.outputs.should_run == 'true'
+        env:
+          CURRENT_TICKER: ${{ steps.position.outputs.ticker }}
+        shell: bash
+        run: |
+          echo "Model position: ${CURRENT_TICKER}"
+
+          BEFORE_HASH="$(
+            sha256sum trade_log.csv 2>/dev/null |
+            awk '{print $1}' ||
+            true
+          )"
+
+          set +e
+
+          python main.py "${CURRENT_TICKER}" \
+            2>&1 | tee relay_output.txt
+
+          PYTHON_EXIT=${PIPESTATUS[0]}
+
+          set -e
+
+          AFTER_HASH="$(
+            sha256sum trade_log.csv 2>/dev/null |
+            awk '{print $1}' ||
+            true
+          )"
+
+          if \
+            [ "${PYTHON_EXIT}" -eq 0 ] && \
+            [ -n "${AFTER_HASH}" ] && \
+            [ "${BEFORE_HASH}" != "${AFTER_HASH}" ]; then
+
+            echo "Relay scan completed successfully."
+            echo "ok=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "Relay did not produce a new trade-log entry."
+            echo "ok=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+          echo "exit_code=${PYTHON_EXIT}" >> "${GITHUB_OUTPUT}"
+
+      # ============================================================
+      # 7. Persist state/history/full console output to relay-state
+      #
+      # Stores:
+      #   scanner_state.json
+      #   trade_log.csv
+      #   runs/YYYY-MM-DD_HH-MM-SS.txt
+      # ============================================================
+      - name: Save Relay state
+        id: state
+        if: steps.relay.outputs.ok == 'true'
+        shell: bash
+        run: |
+          RUN_STAMP="$(
+            TZ=America/New_York \
+            date +'%Y-%m-%d_%H-%M-%S'
+          )"
+
+          rm -rf /tmp/relay-state
+
+          if git show-ref \
+            --verify \
+            --quiet \
+            "refs/remotes/origin/${STATE_BRANCH}"; then
+
+            git worktree add \
+              -B "${STATE_BRANCH}" \
+              /tmp/relay-state \
+              "origin/${STATE_BRANCH}"
+
+          else
+            git worktree add \
+              -b "${STATE_BRANCH}" \
+              /tmp/relay-state \
+              HEAD
+          fi
+
+          mkdir -p /tmp/relay-state/runs
+
+          cp scanner_state.json \
+            /tmp/relay-state/scanner_state.json
+
+          cp trade_log.csv \
+            /tmp/relay-state/trade_log.csv
+
+          cp relay_output.txt \
+            "/tmp/relay-state/runs/${RUN_STAMP}.txt"
+
+          git -C /tmp/relay-state config \
+            user.name "github-actions[bot]"
+
+          git -C /tmp/relay-state config \
+            user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git -C /tmp/relay-state add \
+            scanner_state.json \
+            trade_log.csv \
+            runs/
+
+          if git -C /tmp/relay-state diff --cached --quiet; then
+            echo "No state changes to commit."
+          else
+            git -C /tmp/relay-state commit \
+              -m "state: Relay scan ${RUN_STAMP}"
+
+            git -C /tmp/relay-state push \
+              origin \
+              "HEAD:${STATE_BRANCH}"
+          fi
+
+      # ============================================================
+      # 8. Build + send Telegram report
+      #
+      # Includes:
+      #   - model/current position
+      #   - SPY 5-day trend
+      #   - bull/bear regime
+      #   - full Top Candidates table
+      #   - Score + Momentum + Volume + Event + Flow
+      #   - HOLD/SWITCH
+      #   - recommendation target
+      #   - edge streak
+      #   - full decision reason
+      #
+      # Required GitHub Actions secrets:
+      #   TELEGRAM_BOT_TOKEN
+      #   TELEGRAM_CHAT_ID
+      # ============================================================
+      - name: Send Telegram notification
+        if: always() && steps.market.outputs.should_run == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SCAN_OK: ${{ steps.relay.outputs.ok }}
+          SCAN_EXIT_CODE: ${{ steps.relay.outputs.exit_code }}
+          MODEL_POSITION: ${{ steps.position.outputs.ticker }}
+          STATE_OUTCOME: ${{ steps.state.outcome }}
+        run: |
+          python - <<'PY'
+          import csv
+          import html
+          import json
+          import os
+          import re
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+
+          def read_text(path):
+              try:
+                  with open(
+                      path,
+                      encoding="utf-8",
+                      errors="replace",
+                  ) as f:
+                      return f.read()
+              except Exception:
+                  return ""
+
+
+          output = read_text("relay_output.txt")
+
+          now = datetime.now(
+              ZoneInfo("America/New_York")
+          )
+
+          scan_ok = os.environ.get("SCAN_OK") == "true"
+          state_ok = os.environ.get("STATE_OUTCOME") == "success"
+
+
+          # --------------------------------------------------------
+          # Failure message
+          # --------------------------------------------------------
+          if not scan_ok or not state_ok:
+              tail = "\n".join(
+                  output.splitlines()[-25:]
+              )
+
+              message = (
+                  "🚨 <b>RELAY SCAN FAILED</b>\n"
+                  f"{now:%Y-%m-%d %H:%M ET}\n\n"
+                  f"Model position: "
+                  f"{html.escape(os.environ.get('MODEL_POSITION', '?'))}\n"
+                  f"Scanner OK: {scan_ok}\n"
+                  f"State save: "
+                  f"{html.escape(os.environ.get('STATE_OUTCOME', 'unknown'))}\n"
+                  f"Exit code: "
+                  f"{html.escape(os.environ.get('SCAN_EXIT_CODE', 'unknown'))}"
+              )
+
+              if tail:
+                  message += (
+                      "\n\n<b>Last output</b>\n<pre>"
+                      + html.escape(tail)
+                      + "</pre>"
+                  )
+
+          # --------------------------------------------------------
+          # Successful scan message
+          # --------------------------------------------------------
+          else:
+              current = os.environ.get(
+                  "MODEL_POSITION",
+                  "CASH",
+              )
+
+              # Market context
+              spy_match = re.search(
+                  r"SPY 5-day trend\s*:\s*(.+)",
+                  output,
+              )
+
+              regime_match = re.search(
+                  r"Regime\s*:\s*(.+)",
+                  output,
+              )
+
+              spy = (
+                  spy_match.group(1).strip()
+                  if spy_match
+                  else "n/a"
+              )
+
+              regime = (
+                  regime_match.group(1).strip()
+                  if regime_match
+                  else "n/a"
+              )
+
+              # ----------------------------------------------------
+              # Parse candidate table
+              #
+              # Actual main.py columns:
+              # Ticker Score Momentum Volume Event Flow Bar
+              # ----------------------------------------------------
+              rows = []
+              in_table = False
+
+              row_pattern = re.compile(
+                  r"^\s{2}"
+                  r"([A-Z][A-Z0-9.\-]{0,9})"
+                  r"\s+"
+                  r"([0-9]+\.[0-9]{3})"
+                  r"\s+"
+                  r"([0-9]+\.[0-9]{3})"
+                  r"\s+"
+                  r"([0-9]+\.[0-9]{3})"
+                  r"\s+"
+                  r"([0-9]+\.[0-9]{3})"
+                  r"\s+"
+                  r"([0-9]+\.[0-9]{3})"
+              )
+
+              for line in output.splitlines():
+                  if (
+                      "TOP " in line
+                      and "CANDIDATES" in line
+                  ):
+                      in_table = True
+                      continue
+
+                  if (
+                      in_table
+                      and "CURRENT POSITION" in line
+                  ):
+                      break
+
+                  if not in_table:
+                      continue
+
+                  match = row_pattern.match(line)
+
+                  if match:
+                      rows.append({
+                          "ticker": match.group(1),
+                          "score": match.group(2),
+                          "momentum": match.group(3),
+                          "volume": match.group(4),
+                          "event": match.group(5),
+                          "flow": match.group(6),
+                      })
+
+              # ----------------------------------------------------
+              # Current position score
+              # ----------------------------------------------------
+              current_score = "n/a"
+
+              for row in rows:
+                  if row["ticker"] == current:
+                      current_score = row["score"]
+                      break
+
+              if current_score == "n/a":
+                  current_pattern = re.compile(
+                      r"CURRENT POSITION\s*:\s*"
+                      + re.escape(current)
+                      + r".*?"
+                      r"Score\s*:\s*"
+                      r"\[[^\]]+\]\s*"
+                      r"([0-9]+\.[0-9]{3})",
+                      flags=re.S,
+                  )
+
+                  current_match = current_pattern.search(
+                      output
+                  )
+
+                  if current_match:
+                      current_score = (
+                          current_match.group(1)
+                      )
+
+              # ----------------------------------------------------
+              # Decision
+              # ----------------------------------------------------
+              decision_match = re.search(
+                  r"DECISION\s*:\s*\*{3}\s*"
+                  r"(HOLD|SWITCH)"
+                  r"\s*\*{3}",
+                  output,
+              )
+
+              action = (
+                  decision_match.group(1)
+                  if decision_match
+                  else "UNKNOWN"
+              )
+
+              switch_match = re.search(
+                  r"Consider switching to\s*:\s*"
+                  r"([A-Z][A-Z0-9.\-]*)"
+                  r"\s+\(score\s+([0-9.]+)\)",
+                  output,
+              )
+
+              switch_to = ""
+              switch_score = ""
+
+              if switch_match:
+                  switch_to = switch_match.group(1)
+                  switch_score = switch_match.group(2)
+
+              # Full decision reason comes from trade_log.csv.
+              reason = ""
+
+              try:
+                  with open(
+                      "trade_log.csv",
+                      newline="",
+                      encoding="utf-8",
+                  ) as f:
+                      history = list(csv.DictReader(f))
+
+                  if history:
+                      reason = history[-1].get(
+                          "Reason",
+                          "",
+                      )
+              except Exception:
+                  pass
+
+              # ----------------------------------------------------
+              # Edge streak
+              # ----------------------------------------------------
+              streak = "n/a"
+
+              try:
+                  with open(
+                      "scanner_state.json",
+                      encoding="utf-8",
+                  ) as f:
+                      state = json.load(f)
+
+                  streak = state.get(
+                      "edge_streak",
+                      "n/a",
+                  )
+              except Exception:
+                  pass
+
+              # ----------------------------------------------------
+              # Telegram text
+              # ----------------------------------------------------
+              action_icon = {
+                  "HOLD": "✅",
+                  "SWITCH": "🔄",
+              }.get(action, "❔")
+
+              lines = [
+                  "📊 <b>RELAY DAILY SCAN</b>",
+                  now.strftime("%Y-%m-%d %H:%M ET"),
+                  "",
+                  f"Current holding : {html.escape(current)}",
+                  f"SPY 5-day trend : {html.escape(spy)}",
+                  f"Regime          : {html.escape(regime)}",
+                  "",
+                  "🏆 <b>TOP CANDIDATES</b>",
+                  "",
+                  "<pre>",
+                  (
+                      f"{'Ticker':<7}"
+                      f"{'Score':>6} "
+                      f"{'Mom':>6} "
+                      f"{'Vol':>6} "
+                      f"{'Event':>6} "
+                      f"{'Flow':>6}"
+                  ),
+                  "--------------------------------------",
+              ]
+
+              for row in rows:
+                  marker = (
+                      " *"
+                      if row["ticker"] == current
+                      else ""
+                  )
+
+                  lines.append(
+                      f"{row['ticker']:<7}"
+                      f"{row['score']:>6} "
+                      f"{row['momentum']:>6} "
+                      f"{row['volume']:>6} "
+                      f"{row['event']:>6} "
+                      f"{row['flow']:>6}"
+                      f"{marker}"
+                  )
+
+              lines.extend([
+                  "</pre>",
+                  "",
+                  "📌 <b>CURRENT POSITION</b>",
+                  (
+                      f"{html.escape(current)}"
+                      f" — Score {html.escape(current_score)}"
+                  ),
+                  "",
+                  (
+                      f"{action_icon} "
+                      f"<b>DECISION: {html.escape(action)}</b>"
+                  ),
+              ])
+
+              if action == "SWITCH" and switch_to:
+                  lines.append(
+                      "→ "
+                      f"{html.escape(current)}"
+                      " → "
+                      f"{html.escape(switch_to)}"
+                      f" (score {html.escape(switch_score)})"
+                  )
+
+              lines.extend([
+                  f"Edge streak: {html.escape(str(streak))}",
+                  "",
+                  "<b>Reason</b>",
+                  html.escape(reason or "n/a"),
+              ])
+
+              message = "\n".join(lines)
+
+          # Telegram sendMessage has a finite message size.
+          # Keep a little safety margin.
+          message = message[:4000]
+
+          with open(
+              "telegram_message.txt",
+              "w",
+              encoding="utf-8",
+          ) as f:
+              f.write(message)
+
+          print(message)
+          PY
+
+          curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            -d "parse_mode=HTML" \
+            --data-urlencode "text@telegram_message.txt"
+
+      # ============================================================
+      # 9. Mark the GitHub Actions run as failed after Telegram
+      # has had a chance to notify you.
+      # ============================================================
+      - name: Mark failed scan
+        if: >
+          steps.market.outputs.should_run == 'true' &&
+          steps.relay.outputs.ok != 'true'
+        run: |
+          echo "Relay scanner failed or produced no trade log entry."
+          exit 1
+
+      - name: Mark failed state save
+        if: >
+          steps.market.outputs.should_run == 'true' &&
+          steps.relay.outputs.ok == 'true' &&
+          steps.state.outcome != 'success'
+        run: |
+          echo "Relay scan succeeded but state persistence failed."
+          exit 1
