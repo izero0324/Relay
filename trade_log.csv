@@ -68,3 +68,4 @@ Date,Current_Position,Action,Switch_To,Reason,Outcome
 
 2026-08-14,NBIS,HOLD,,Current NBIS scores 0.769; best candidate FOXA scores 0.823 (Δ=+0.054 ≤ threshold 0.099 — hold advantage),
 2026-08-17,NBIS,HOLD,,Edge to TER (Δ=+0.452) on scan day 1/2 — awaiting confirmation,
+2026-08-18,NBIS,SWITCH,WMT,Best candidate WMT scores 0.924 vs current NBIS at 0.212 (edge Δ=+0.712 exceeds threshold 0.180),
