@@ -35,6 +35,7 @@ from config import (
     TOP_CANDIDATES,
     TRADE_LOG_PATH,
     VOLUME_WINDOW_DAYS,
+    WEIGHTS,
 )
 from scorer import composite_score, decision
 from signals import (
@@ -182,8 +183,8 @@ def full_score(ticker: str, momentum: float, volume: float, spy_trend: float) ->
     per-ticker event and flow API calls.
     """
     obj = yf.Ticker(ticker)
-    e   = event_score(obj)
-    f   = flow_score(obj, spy_trend)
+    e   = event_score(obj) if WEIGHTS["event"] > 0 else 0.50
+    f   = flow_score(obj, spy_trend) if WEIGHTS["flow"] > 0 else 0.50
     c   = composite_score(momentum, volume, e, f)
 
     return {
@@ -408,7 +409,14 @@ def main():
     # (not just the enriched subset) so percentiles mean the same thing the
     # backtest validated.
     m_scores, v_scores = price_volume_scores(data)
-    qs  = {t: (m_scores[t] + v_scores[t]) / 2.0 for t in data}
+    price_weight = WEIGHTS["momentum"] + WEIGHTS["volume"]
+    qs = {
+        t: (
+            WEIGHTS["momentum"] * m_scores[t]
+            + WEIGHTS["volume"] * v_scores[t]
+        ) / price_weight
+        for t in data
+    }
     top = sorted(qs, key=qs.get, reverse=True)[:PRE_FILTER_TOP_N]
 
     # Ensure current position is always evaluated

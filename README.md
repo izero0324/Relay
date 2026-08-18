@@ -40,7 +40,7 @@ python main.py CASH
 1. Fetches S&P 500 + NASDAQ-100 tickers from Wikipedia (~620 stocks)
 2. Bulk-downloads 35 days of OHLCV in one request (fast)
 3. Applies liquidity filter (avg volume ??? 1M, price ??? $5)
-4. Quick-scores all stocks on Momentum + Volume ??? keeps top 60
+4. Pre-filters stocks using the enabled price-signal weights → keeps top 60
 5. Full-scores those 60 with all 4 signals (Event + Flow require per-ticker calls)
 6. Prints ranked table + HOLD/SWITCH decision
 7. Appends a row to `trade_log.csv`
@@ -70,7 +70,7 @@ python main.py CASH
 | Parameter | Default | What it controls |
 |---|---|---|
 | `SWITCH_THRESHOLD` | 0.15 | How much better a candidate must be to trigger a switch |
-| `WEIGHTS` | equal (0.25 each) | Relative importance of each signal |
+| `WEIGHTS` | Momentum 61.54%, Event 38.46% | Relative importance of each signal; Volume/Flow remain diagnostic only |
 | `MIN_AVG_VOLUME` | 1,000,000 | Liquidity filter (shares/day) |
 | `PRE_FILTER_TOP_N` | 60 | How many stocks get full scoring (speed vs coverage) |
 | `TOP_CANDIDATES` | 10 | Rows in the output table |

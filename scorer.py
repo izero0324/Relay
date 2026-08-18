@@ -8,20 +8,27 @@ Decision rule (from TRD Section 3):
       HOLD
 """
 
-from config import BACKTEST_NORMALIZE_SCORE, SWITCH_THRESHOLD, WEIGHTS
+from __future__ import annotations
+
+from config import (
+    BACKTEST_ACTIVE_SIGNALS,
+    BACKTEST_NORMALIZE_SCORE,
+    SWITCH_THRESHOLD,
+    WEIGHTS,
+)
 
 
 def effective_live_threshold() -> float:
     """
     SWITCH_THRESHOLD in raw live-composite units.
 
-    The backtest validates the threshold on scores normalized to the
-    momentum+volume weight (0.55). The live composite spans the full weight
-    (1.0), so a raw delta of X live equals X/0.55 in backtested units.
-    Scaling the threshold down by 0.55 makes both compare like for like.
+    The threshold is validated on a score normalized over the signals active
+    in that backtest. Scale it by those signals' live composite weight so the
+    live and backtest score deltas stay in the same units.
     """
     if BACKTEST_NORMALIZE_SCORE:
-        return SWITCH_THRESHOLD * (WEIGHTS["momentum"] + WEIGHTS["volume"])
+        active_weight = sum(WEIGHTS[name] for name in BACKTEST_ACTIVE_SIGNALS)
+        return SWITCH_THRESHOLD * active_weight
     return SWITCH_THRESHOLD
 
 

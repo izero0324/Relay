@@ -50,6 +50,7 @@ from typing import Optional, Union
 sys.path.insert(0, os.path.dirname(__file__))
 
 from config import (
+    BACKTEST_ACTIVE_SIGNALS,
     BACKTEST_NORMALIZE_SCORE,
     CROSS_SECTIONAL_RANK,
     HIGH_WINDOW_DAYS,
@@ -604,7 +605,9 @@ def run_simulation(
                 min_hold_met
                 and best_ticker != position
                 and (best_score - current_score) > (
-                    switch_threshold * (WEIGHTS["momentum"] + WEIGHTS["volume"])
+                    switch_threshold * sum(
+                        WEIGHTS[name] for name in BACKTEST_ACTIVE_SIGNALS
+                    )
                     if include_event_flow and BACKTEST_NORMALIZE_SCORE
                     else switch_threshold
                 )

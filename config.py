@@ -11,12 +11,19 @@ v3 changes:
 """
 
 # ── Signal weights (must sum to 1.0) ──────────────────────────────────────────
+# Momentum + Event configuration selected by the legacy close-execution
+# backtest (2025-05-01 → 2026-04-30). Volume is still calculated/displayed for
+# diagnostics, but it and Flow do not affect the final ranking.
 WEIGHTS = {
-    "momentum": 0.40,
-    "volume":   0.15,
-    "event":    0.25,
-    "flow":     0.20,
+    "momentum": 0.6153846154,
+    "volume":   0.0,
+    "event":    0.3846153846,
+    "flow":     0.0,
 }
+
+# Signals that were active in the backtest used to select the live weights.
+# Used to keep SWITCH_THRESHOLD in the same score units in live decisions.
+BACKTEST_ACTIVE_SIGNALS = ("momentum", "event")
 
 # ── Decision threshold ────────────────────────────────────────────────────────
 # Expressed in NORMALIZED momentum+volume units (the units the backtest
@@ -28,7 +35,7 @@ SWITCH_THRESHOLD = 0.18
 # The edge must exceed the threshold on N consecutive scans/days before a
 # switch fires. Filters one-day score noise (volume spikes etc.).
 # Set to 1 to disable. Entries from CASH are never delayed.
-SWITCH_CONFIRM_DAYS = 2
+SWITCH_CONFIRM_DAYS = 1
 
 # ── Cross-sectional momentum ranking ──────────────────────────────────────────
 # When True, the momentum component is the stock's percentile rank of raw
