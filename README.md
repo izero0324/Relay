@@ -133,6 +133,9 @@ python backtest.py --fast
 # Try a different switch threshold
 python backtest.py --threshold 0.10
 
+# Add backtest-safe historical Event and Flow proxies
+python backtest.py --include-event-flow
+
 # Full options
 python backtest.py --start 2022-01-01 --capital 25000 --max-universe 400
 ```
@@ -150,7 +153,7 @@ python backtest.py --start 2022-01-01 --capital 25000 --max-universe 400
 | Item | Detail |
 |---|---|
 | No lookahead bias | Signals computed from close of day `t-1`; trades execute at the open of day `t` |
-| Signals used | Momentum + Volume only ??? Event + Flow set to neutral 0.5 |
+| Signals used | Default: Momentum + Volume. `--include-event-flow` adds explicitly labelled, point-in-time Event and Flow proxies |
 | Realistic execution | Exits/entries at next-day open; overnight gap earned by the old position, not the new pick |
 | Transaction costs | 0.1% per side (a switch = sell + buy = 0.2%) |
 | Switch discipline | Min-hold + edge must persist `SWITCH_CONFIRM_DAYS` consecutive days |

@@ -77,7 +77,7 @@ def main() -> None:
     original_score = bt.score_universe
     active_momentum_weight = 0.5
 
-    def cached_score(_universe, _data, prev_day, _spy_slice):
+    def cached_score(_universe, _data, prev_day, _spy_slice, **_kwargs):
         momentum, volume = component_cache.get(prev_day, ({}, {}))
         wm = active_momentum_weight
         return {ticker: wm * score + (1 - wm) * volume[ticker]

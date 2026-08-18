@@ -10,8 +10,9 @@ Methodology
   • Trades execute at the OPEN of day t (you can't trade yesterday's close):
       - exits earn the overnight move close[t-1] → open[t] on the old position
       - entries earn open[t] → close[t] on the new position
-  • Signals used: Momentum + Volume  (event/flow require live data;
-    set to neutral 0.5 — backtest is a CONSERVATIVE lower bound)
+  • Default signals: Momentum + Volume. `--include-event-flow` adds
+    point-in-time OHLCV/market proxies; unavailable historical Yahoo news and
+    pre-market snapshots are not silently backfilled with present-day data.
   • Transaction cost: TRANSACTION_COST per SIDE (a switch = sell + buy = 2×)
   • Optional cross-sectional momentum ranking (config CROSS_SECTIONAL_RANK)
   • Switch requires the edge to persist SWITCH_CONFIRM_DAYS consecutive days
@@ -145,6 +146,15 @@ def parse_args() -> argparse.Namespace:
             f"(default: {SWITCH_THRESHOLD})"
         ),
     )
+    parser.add_argument(
+        "--include-event-flow",
+        action="store_true",
+        help=(
+            "Include point-in-time Event/Flow historical proxies. Event uses "
+            "directional price reaction + abnormal volume; Flow uses the last "
+            "completed stock move + contemporaneous SPY trend."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -259,11 +269,65 @@ def combine_mv(m: float, v: float) -> float:
     )
 
 
+def event_proxy_score(hist: pd.DataFrame) -> float:
+    """Point-in-time proxy for the price response to a company event.
+
+    Historical Yahoo news/calendar snapshots are unavailable.  A directional
+    close-to-close move confirmed by abnormal volume is used instead.  Only
+    completed bars in ``hist`` are inspected, so this is backtest-safe.
+    """
+    if len(hist) < VOLUME_WINDOW_DAYS + 2:
+        return EVENT_NEUTRAL
+    close = hist["Close"].squeeze()
+    volume = hist["Volume"].squeeze()
+    prev_close = float(close.iloc[-2])
+    avg_volume = float(volume.iloc[-(VOLUME_WINDOW_DAYS + 1):-1].mean())
+    if prev_close <= 0 or avg_volume <= 0:
+        return EVENT_NEUTRAL
+    move = float(close.iloc[-1]) / prev_close - 1.0
+    volume_ratio = max(float(volume.iloc[-1]) / avg_volume, 0.01)
+    # Quiet sessions stay near neutral; large, volume-confirmed reactions
+    # approach the ends of the [0, 1] range.
+    impact = np.tanh(move * 18.0) * min(max(np.log(volume_ratio) + 1.0, 0.0), 2.0) / 2.0
+    return float(np.clip(0.5 + 0.5 * impact, 0.0, 1.0))
+
+
+def flow_proxy_score(hist: pd.DataFrame, spy_slice: Optional[pd.Series]) -> float:
+    """End-of-day historical analogue of live latest-price + market flow.
+
+    It uses the last completed stock return and the contemporaneous SPY
+    five-session trend.  This deliberately avoids using the next session's
+    open, which would make an at-open fill optimistic/look-ahead biased.
+    """
+    if len(hist) < 2:
+        return FLOW_NEUTRAL
+    close = hist["Close"].squeeze()
+    prev_close = float(close.iloc[-2])
+    if prev_close <= 0:
+        return FLOW_NEUTRAL
+    latest_move = float(close.iloc[-1]) / prev_close - 1.0
+    score = 0.5 + (1.0 / (1.0 + np.exp(-40.0 * latest_move)) - 0.5)
+    if spy_slice is not None and len(spy_slice.dropna()) >= 6:
+        spy_close = spy_slice.dropna()
+        spy_trend = float(spy_close.iloc[-1] / spy_close.iloc[-6] - 1.0)
+        score += (1.0 / (1.0 + np.exp(-20.0 * spy_trend)) - 0.5) * 0.3
+    return float(np.clip(score, 0.0, 1.0))
+
+
+def combine_four(m: float, v: float, e: float, f: float) -> float:
+    """Combine all four signals in the same raw units as the live scanner."""
+    return (
+        WEIGHTS["momentum"] * m + WEIGHTS["volume"] * v
+        + WEIGHTS["event"] * e + WEIGHTS["flow"] * f
+    )
+
+
 def score_universe(
     universe_tickers: list,
     data: dict,
     prev_day,
     spy_slice: Optional[pd.Series],
+    include_event_flow: bool = False,
 ) -> dict:
     """
     Score every ticker on data up to prev_day (no lookahead).
@@ -292,7 +356,19 @@ def score_universe(
     else:
         ms = {t: min(max(r, 0.0), 1.0) for t, r in raws.items()}
 
-    return {t: combine_mv(ms[t], vols[t]) for t in ms}
+    if not include_event_flow:
+        return {t: combine_mv(ms[t], vols[t]) for t in ms}
+
+    scores = {}
+    for ticker in ms:
+        if ticker not in vols:
+            continue
+        hist = data[ticker].loc[:prev_day]
+        scores[ticker] = combine_four(
+            ms[ticker], vols[ticker], event_proxy_score(hist),
+            flow_proxy_score(hist, spy_slice),
+        )
+    return scores
 
 
 def _px(df: pd.DataFrame, day, col: str) -> Optional[float]:
@@ -315,6 +391,7 @@ def run_simulation(
     initial_capital: float,
     switch_threshold: float,
     spy_series: Optional[pd.Series] = None,
+    include_event_flow: bool = False,
 ) -> tuple:
     """
     Simulate the Hold/Switch strategy over the given trading days. (v3)
@@ -350,7 +427,8 @@ def run_simulation(
         f"stop_loss={STOP_LOSS_PCT}, regime_confirm={REGIME_CONFIRM_DAYS}, "
         f"cooldown={REGIME_REENTRY_COOLDOWN}, "
         f"switch_confirm={SWITCH_CONFIRM_DAYS}, "
-        f"xsect_rank={CROSS_SECTIONAL_RANK}, open-execution, per-side costs"
+        f"xsect_rank={CROSS_SECTIONAL_RANK}, event_flow_proxy={include_event_flow}, "
+        f"open-execution, per-side costs"
     )
 
     for i in range(1, len(trading_days)):
@@ -493,7 +571,10 @@ def run_simulation(
             spy_score_slice = spy_close.loc[:prev_day]
 
         # ── Score universe (data up to prev_day only — no lookahead) ─────────
-        scores = score_universe(universe_tickers, data, prev_day, spy_score_slice)
+        scores = score_universe(
+            universe_tickers, data, prev_day, spy_score_slice,
+            include_event_flow=include_event_flow,
+        )
 
         if not scores:
             equity_rows.append({
@@ -522,7 +603,11 @@ def run_simulation(
             has_edge = (
                 min_hold_met
                 and best_ticker != position
-                and (best_score - current_score) > switch_threshold
+                and (best_score - current_score) > (
+                    switch_threshold * (WEIGHTS["momentum"] + WEIGHTS["volume"])
+                    if include_event_flow and BACKTEST_NORMALIZE_SCORE
+                    else switch_threshold
+                )
             )
             edge_streak = edge_streak + 1 if has_edge else 0
             do_switch   = has_edge and edge_streak >= SWITCH_CONFIRM_DAYS
@@ -701,7 +786,7 @@ def _divider(char="═", width=62):
     print(char * width)
 
 
-def print_summary(m: dict, switch_threshold: float):
+def print_summary(m: dict, switch_threshold: float, include_event_flow: bool = False):
     print()
     _divider()
     print("  BACKTEST RESULTS — Hold/Switch Rotation Strategy")
@@ -730,8 +815,12 @@ def print_summary(m: dict, switch_threshold: float):
     print(f"    Avg hold (days)         : {m['avg_hold_days']:>8.1f}")
     print(f"    Daily turnover          : {m['turnover_daily']:>8.4f}")
     _divider("─")
-    print("  NOTE: Backtest uses Momentum + Volume signals only.")
-    print("  Event & Flow signals (unavailable historically) set to neutral.")
+    if include_event_flow:
+        print("  NOTE: Backtest uses Momentum + Volume + Event/Flow proxies.")
+        print("  Proxies use point-in-time OHLCV/market data, not historical news snapshots.")
+    else:
+        print("  NOTE: Backtest uses Momentum + Volume signals only.")
+        print("  Event & Flow signals (unavailable historically) set to neutral.")
     print("  Trades execute at next-day OPEN; costs charged per side.")
     print("  Survivorship bias present (current index constituents used).")
     _divider()
@@ -941,6 +1030,7 @@ def main():
         initial_capital=args.capital,
         switch_threshold=switch_threshold,
         spy_series=spy_series,
+        include_event_flow=args.include_event_flow,
     )
 
     # ── Regime stats ──────────────────────────────────────────────────────────
@@ -955,7 +1045,7 @@ def main():
     )
 
     # ── Output ────────────────────────────────────────────────────────────────
-    print_summary(metrics, switch_threshold)
+    print_summary(metrics, switch_threshold, args.include_event_flow)
 
     save_equity_csv(equity_df, spy_series, args.capital)
     save_trades_csv(trades_df)
