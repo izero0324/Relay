@@ -2,14 +2,15 @@ name: Relay Daily Scan
 
 on:
   # Normal NYSE day:
-  # 16:00 ET close -> run at 15:35 ET
+  # Wake the runner at 15:05 ET, then wait in-runner until 15:30 ET.
+  # Starting early absorbs GitHub schedule queue delays.
   schedule:
-    - cron: "35 15 * * 1-5"
+    - cron: "5 15 * * 1-5"
       timezone: "America/New_York"
 
     # Early-close NYSE day:
-    # Usually 13:00 ET close -> run at 12:35 ET
-    - cron: "35 12 * * 1-5"
+    # Wake at 12:05 ET, then wait until 12:30 ET.
+    - cron: "5 12 * * 1-5"
       timezone: "America/New_York"
 
   # Manual test button
@@ -63,12 +64,12 @@ jobs:
       # 3. Check actual NYSE calendar
       #
       # Normal day:
-      #   15:35 trigger runs
-      #   12:35 trigger skips
+      #   15:05 trigger waits until 15:30, then runs
+      #   12:05 trigger skips
       #
       # Early close:
-      #   12:35 trigger runs
-      #   15:35 trigger skips
+      #   12:05 trigger waits until 12:30, then runs
+      #   15:05 trigger skips
       #
       # Holiday:
       #   both skip
@@ -86,6 +87,7 @@ jobs:
           python - <<'PY'
           import os
           from datetime import datetime, timedelta
+          import time
           from zoneinfo import ZoneInfo
 
           import pandas_market_calendars as mcal
@@ -139,28 +141,77 @@ jobs:
                       .to_pydatetime()
                   )
 
+                  # The recommendation is acted on 30 minutes before the
+                  # actual NYSE close. Wake GitHub 25 minutes earlier so its
+                  # queue delay normally happens before the target, not after.
                   target = (
                       market_close
+                      - timedelta(minutes=30)
+                  )
+
+                  wake_time = (
+                      target
                       - timedelta(minutes=25)
                   )
 
                   expected_cron = (
-                      f"35 {target.hour} * * 1-5"
+                      f"{wake_time.minute} {wake_time.hour} * * 1-5"
                   )
 
-                  should_run = (
+                  correct_schedule = (
                       event_schedule
                       == expected_cron
                   )
 
-                  reason = (
-                      f"NYSE close "
-                      f"{market_close:%H:%M ET}; "
-                      f"target "
-                      f"{target:%H:%M ET}; "
-                      f"trigger "
-                      f"{event_schedule}"
-                  )
+                  if not correct_schedule:
+
+                      should_run = False
+
+                      reason = (
+                          f"NYSE close {market_close:%H:%M ET}; "
+                          f"this cron ({event_schedule}) is not today's "
+                          f"required wake-up ({expected_cron})"
+                      )
+
+                  else:
+
+                      now = datetime.now(
+                          ZoneInfo("America/New_York")
+                      )
+
+                      if now < target:
+
+                          wait_seconds = (
+                              target - now
+                          ).total_seconds()
+
+                          print(
+                              f"Runner ready early; waiting "
+                              f"{wait_seconds / 60:.1f} minutes until "
+                              f"{target:%H:%M:%S ET}",
+                              flush=True,
+                          )
+
+                          time.sleep(wait_seconds)
+
+                          now = datetime.now(
+                              ZoneInfo("America/New_York")
+                          )
+
+                      lateness = now - target
+
+                      should_run = (
+                          timedelta(0)
+                          <= lateness
+                          <= timedelta(minutes=5)
+                      )
+
+                      reason = (
+                          f"NYSE close {market_close:%H:%M ET}; "
+                          f"target {target:%H:%M ET}; "
+                          f"actual start {now:%H:%M:%S ET}; "
+                          f"lateness {lateness.total_seconds() / 60:.1f} min"
+                      )
 
 
           print(reason)
@@ -605,6 +656,7 @@ jobs:
           import re
 
           from datetime import datetime
+          from urllib.parse import quote
           from zoneinfo import ZoneInfo
 
 
@@ -1227,6 +1279,41 @@ jobs:
 
                       + ")"
 
+                  )
+
+
+              # ----------------------------------------------------
+              # Recommended-stock company profile
+              # ----------------------------------------------------
+
+              profile_ticker = (
+                  switch_to
+                  if action == "SWITCH" and switch_to
+                  else current
+              )
+
+
+              if profile_ticker and profile_ticker != "CASH":
+
+                  # Yahoo represents class-share dots as dashes in URLs
+                  # (for example BRK.B -> BRK-B).
+                  yahoo_symbol = quote(
+                      profile_ticker.replace(".", "-"),
+                      safe="-",
+                  )
+
+                  profile_url = (
+                      "https://finance.yahoo.com/quote/"
+                      + yahoo_symbol
+                      + "/profile/"
+                  )
+
+                  lines.append(
+                      "🔎 <a href=\""
+                      + html.escape(profile_url, quote=True)
+                      + "\">查看 "
+                      + html.escape(profile_ticker)
+                      + " 公司介紹</a>"
                   )
 
 
