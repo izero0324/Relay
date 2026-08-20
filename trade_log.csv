@@ -70,3 +70,4 @@ Date,Current_Position,Action,Switch_To,Reason,Outcome
 2026-08-17,NBIS,HOLD,,Edge to TER (Δ=+0.452) on scan day 1/2 — awaiting confirmation,
 2026-08-18,NBIS,SWITCH,WMT,Best candidate WMT scores 0.924 vs current NBIS at 0.212 (edge Δ=+0.712 exceeds threshold 0.180),
 2026-08-19,WMT,HOLD,,"Edge to TGT exists, but WMT held only 0/2 scan days — min-hold enforced",
+2026-08-20,WMT,HOLD,,"Edge to LYB exists, but WMT held only 1/2 scan days — min-hold enforced",
