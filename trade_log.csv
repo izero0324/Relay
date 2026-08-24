@@ -72,3 +72,4 @@ Date,Current_Position,Action,Switch_To,Reason,Outcome
 2026-08-19,WMT,HOLD,,"Edge to TGT exists, but WMT held only 0/2 scan days — min-hold enforced",
 2026-08-20,WMT,HOLD,,"Edge to LYB exists, but WMT held only 1/2 scan days — min-hold enforced",
 2026-08-21,WMT,SWITCH,CRM,Best candidate CRM scores 0.900 vs current WMT at 0.274 (edge Δ=+0.626 exceeds threshold 0.180),
+2026-08-24,CRM,HOLD,,Current CRM scores 0.869; best candidate TGT scores 0.873 (Δ=+0.004 ≤ threshold 0.180 — hold advantage),
