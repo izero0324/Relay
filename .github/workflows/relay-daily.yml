@@ -8,11 +8,6 @@ on:
     - cron: "5 15 * * 1-5"
       timezone: "America/New_York"
 
-    # Early-close NYSE day:
-    # Wake at 12:05 ET, then wait until 12:30 ET.
-    - cron: "5 12 * * 1-5"
-      timezone: "America/New_York"
-
   # Manual test button
   workflow_dispatch:
 
@@ -715,7 +710,7 @@ jobs:
           ):
 
               message = "\n".join([
-                  "🚨 <b>RELAY SCAN FAILED</b>",
+                  "???? <b>RELAY SCAN FAILED</b>",
 
                   now.strftime(
                       "%Y-%m-%d %H:%M ET"
@@ -1102,15 +1097,15 @@ jobs:
 
               action_icon = {
 
-                  "HOLD": "✅",
+                  "HOLD": "???",
 
-                  "SWITCH": "🔄",
+                  "SWITCH": "????",
 
               }.get(
 
                   action,
 
-                  "❔",
+                  "???",
 
               )
 
@@ -1179,7 +1174,7 @@ jobs:
 
               lines = [
 
-                  "📊 <b>RELAY DAILY SCAN</b>",
+                  "???? <b>RELAY DAILY SCAN</b>",
 
                   now.strftime(
                       "%Y-%m-%d %H:%M ET"
@@ -1210,7 +1205,7 @@ jobs:
 
                   "",
 
-                  "🏆 <b>TOP CANDIDATES</b>",
+                  "???? <b>TOP CANDIDATES</b>",
 
                   "",
 
@@ -1226,13 +1221,13 @@ jobs:
 
                   "",
 
-                  "📌 <b>CURRENT POSITION</b>",
+                  "???? <b>CURRENT POSITION</b>",
 
                   (
                       html.escape(
                           current
                       )
-                      + " — Score "
+                      + " ??? Score "
                       + html.escape(
                           current_score
                       )
@@ -1259,13 +1254,13 @@ jobs:
 
                   lines.append(
 
-                      "→ "
+                      "??? "
 
                       + html.escape(
                           current
                       )
 
-                      + " → "
+                      + " ??? "
 
                       + html.escape(
                           switch_to
@@ -1309,11 +1304,11 @@ jobs:
                   )
 
                   lines.append(
-                      "🔎 <a href=\""
+                      "???? <a href=\""
                       + html.escape(profile_url, quote=True)
-                      + "\">查看 "
+                      + "\">??��?? "
                       + html.escape(profile_ticker)
-                      + " 公司介紹</a>"
+                      + " ??��?��??�?</a>"
                   )
 
 
