@@ -74,3 +74,4 @@ Date,Current_Position,Action,Switch_To,Reason,Outcome
 2026-08-21,WMT,SWITCH,CRM,Best candidate CRM scores 0.900 vs current WMT at 0.274 (edge Δ=+0.626 exceeds threshold 0.180),
 2026-08-24,CRM,HOLD,,Current CRM scores 0.869; best candidate TGT scores 0.873 (Δ=+0.004 ≤ threshold 0.180 — hold advantage),
 2026-08-25,CRM,HOLD,,Current CRM scores 0.736; best candidate PFE scores 0.881 (Δ=+0.145 ≤ threshold 0.180 — hold advantage),
+2026-08-26,CRM,HOLD,,Current CRM scores 0.771; best candidate BBY scores 0.879 (Δ=+0.108 ≤ threshold 0.180 — hold advantage),
