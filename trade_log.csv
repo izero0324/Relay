@@ -77,3 +77,4 @@ Date,Current_Position,Action,Switch_To,Reason,Outcome
 2026-08-26,CRM,HOLD,,Current CRM scores 0.771; best candidate BBY scores 0.879 (Δ=+0.108 ≤ threshold 0.180 — hold advantage),
 2026-08-27,CRM,HOLD,,Current CRM scores 0.930; best candidate CRWD scores 0.921 (Δ=-0.009 ≤ threshold 0.180 — hold advantage),
 2026-08-28,CRM,HOLD,,Current CRM scores 0.854; best candidate MPC scores 0.879 (Δ=+0.025 ≤ threshold 0.180 — hold advantage),
+2026-08-31,CRM,HOLD,,Current CRM scores 0.732; best candidate VLO scores 0.881 (Δ=+0.149 ≤ threshold 0.180 — hold advantage),
