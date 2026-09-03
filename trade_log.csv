@@ -80,3 +80,4 @@ Date,Current_Position,Action,Switch_To,Reason,Outcome
 2026-08-31,CRM,HOLD,,Current CRM scores 0.732; best candidate VLO scores 0.881 (Δ=+0.149 ≤ threshold 0.180 — hold advantage),
 2026-09-01,CRM,SWITCH,MDT,Best candidate MDT scores 0.930 vs current CRM at 0.739 (edge Δ=+0.191 exceeds threshold 0.180),
 2026-09-02,MDT,HOLD,,Current MDT scores 0.697; best candidate PSX scores 0.870 (Δ=+0.173 ≤ threshold 0.180 — hold advantage),
+2026-09-03,MDT,HOLD,,Current MDT scores 0.774; best candidate CCI scores 0.885 (Δ=+0.111 ≤ threshold 0.180 — hold advantage),
