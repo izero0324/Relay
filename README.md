@@ -1,7 +1,7 @@
 # Daily Long-Only Rotation Scanner
 
 A daily Hold/Switch decision system for a concentrated long-only portfolio.
-Run each morning before UK market closed (NYSE close 16:00 ET; target 15:35 ET) to get a scored ranking of
+Run each day before US market closed (NYSE close 16:00 ET; target 15:35 ET) to get a scored ranking of
 candidates and a clear HOLD or SWITCH recommendation.
 
 ---
