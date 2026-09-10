@@ -83,3 +83,4 @@ Date,Current_Position,Action,Switch_To,Reason,Outcome
 2026-09-03,MDT,HOLD,,Current MDT scores 0.774; best candidate CCI scores 0.885 (Δ=+0.111 ≤ threshold 0.180 — hold advantage),
 2026-09-04,MDT,HOLD,,Current MDT scores 0.846; best candidate CEG scores 0.885 (Δ=+0.039 ≤ threshold 0.180 — hold advantage),
 2026-09-08,MDT,SWITCH,ORCL,Best candidate ORCL scores 0.888 vs current MDT at 0.678 (edge Δ=+0.210 exceeds threshold 0.180),
+2026-09-10,ORCL,HOLD,,Current ORCL scores 0.913; best candidate MU scores 0.875 (Δ=-0.038 ≤ threshold 0.180 — hold advantage),
