@@ -52,8 +52,10 @@ SCANNER_STATE_PATH = "scanner_state.json"
 MIN_HOLD_DAYS = 2
 
 # ── Per-trade stop loss ───────────────────────────────────────────────────────
-# Exit position next day if cumulative return from entry drops below this.
-# Set to None to disable.  -0.06 = -6% hard stop.
+# Live scanner: compare today's regular-session minute-bar low with the stop
+# derived from Relay's estimated entry; a touch moves model state to CASH.
+# backtest.py still uses its documented daily close / next-open approximation.
+# Set to None to disable. -0.06 = -6% model stop.
 STOP_LOSS_PCT = -0.06
 
 # ── Regime filter ─────────────────────────────────────────────────────────────

@@ -13,12 +13,16 @@ Output:
   - Row appended to trade_log.csv
 """
 
+from __future__ import annotations
+
 import csv
 import json
 import logging
 import os
 import sys
+import textwrap
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yfinance as yf
@@ -31,11 +35,21 @@ from config import (
     MIN_PRICE,
     PRE_FILTER_TOP_N,
     SCANNER_STATE_PATH,
+    STOP_LOSS_PCT,
     SWITCH_CONFIRM_DAYS,
     TOP_CANDIDATES,
     TRADE_LOG_PATH,
     VOLUME_WINDOW_DAYS,
     WEIGHTS,
+)
+from position_risk import (
+    TRADE_LOG_FIELDS,
+    EntryDetails,
+    StopCheck,
+    ensure_trade_log_schema,
+    evaluate_stop,
+    fetch_regular_session_snapshot,
+    find_entry_details,
 )
 from scorer import composite_score, decision
 from signals import (
@@ -206,25 +220,78 @@ def append_trade_log(
     action: str,
     switch_to: str,
     reason: str,
+    entry: EntryDetails | None = None,
+    session_low: float | None = None,
+    stop_status: str = "",
+    stop_checked_through: datetime | None = None,
 ) -> None:
-    """Append one row to trade_log.csv. Creates the file with headers if new."""
+    """Append one row, migrating older logs to the risk-aware schema."""
     is_new = not os.path.exists(TRADE_LOG_PATH)
-    with open(TRADE_LOG_PATH, "a", newline="") as f:
-        writer = csv.writer(f)
+    if not is_new:
+        ensure_trade_log_schema(TRADE_LOG_PATH)
+    fieldnames = TRADE_LOG_FIELDS
+    if not is_new:
+        with open(TRADE_LOG_PATH, newline="", encoding="utf-8") as existing:
+            fieldnames = list(csv.DictReader(existing).fieldnames or TRADE_LOG_FIELDS)
+    with open(TRADE_LOG_PATH, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         if is_new:
-            writer.writerow([
-                "Date", "Current_Position", "Action",
-                "Switch_To", "Reason", "Outcome",
-            ])
-        writer.writerow([
-            date.today().isoformat(),
-            current,
-            action,
-            switch_to if action == "SWITCH" else "",
-            reason,
-            "",  # Outcome filled in manually later
-        ])
+            writer.writeheader()
+        writer.writerow({
+            "Date": date.today().isoformat(),
+            "Current_Position": current,
+            "Action": action,
+            "Switch_To": switch_to if action in {"SWITCH", "STOP_LOSS"} else "",
+            "Reason": reason,
+            "Outcome": "",
+            "Expected_Entry_Price": f"{entry.price:.4f}" if entry else "",
+            "Entry_Time_ET": entry.time_et.isoformat() if entry and entry.time_et else "",
+            "Stop_Price": (
+                f"{entry.stop_price:.4f}"
+                if entry and entry.stop_price is not None else ""
+            ),
+            "Session_Low": f"{session_low:.4f}" if session_low is not None else "",
+            "Stop_Status": stop_status,
+            "Stop_Checked_Through_ET": (
+                stop_checked_through.isoformat() if stop_checked_through else ""
+            ),
+        })
     logger.info(f"Trade log updated → {TRADE_LOG_PATH}")
+
+
+def _print_stop_panel(check: StopCheck) -> None:
+    print("\n  RISK / 6% STOP")
+    if check.entry:
+        print(f"  Expected entry   : ${check.entry.price:.2f}")
+        if check.entry.stop_price is not None:
+            print(f"  Stop price       : ${check.entry.stop_price:.2f}")
+    else:
+        print("  Expected entry   : unavailable (legacy/manual position)")
+
+    if check.snapshot:
+        print(f"  Price at scan    : ${check.snapshot.last_price:.2f}")
+        print(f"  Session low      : ${check.snapshot.session_low:.2f}")
+
+    labels = {
+        "ACTIVE": "ACTIVE — not touched since last check",
+        "TRIGGERED": "TRIGGERED — model position moves to CASH",
+        "NO_ENTRY_PRICE": "UNAVAILABLE — waiting for the next recorded SWITCH",
+        "NO_SESSION_DATA": "UNAVAILABLE — no new regular-session minute data",
+        "DISABLED": "DISABLED — STOP_LOSS_PCT is None",
+        "CASH": "N/A — model position is CASH",
+    }
+    print(f"  Stop status      : {labels.get(check.status, check.status)}")
+
+
+def _print_decision_panel(action: str, reason: str) -> None:
+    width = 57
+    title = f"DECISION :  *** {action} ***"
+    print()
+    print(f"  ┌{'─' * (width + 2)}┐")
+    print(f"  │ {title:<{width}} │")
+    for line in textwrap.wrap(reason, width=width) or [""]:
+        print(f"  │ {line:<{width}} │")
+    print(f"  └{'─' * (width + 2)}┘")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -362,6 +429,47 @@ def main():
     # ── 1. Current position ───────────────────────────────────────────────────
     current_ticker = get_current_ticker()
     print(f"\n  Current holding : {current_ticker}")
+
+    # ── Live model stop check ────────────────────────────────────────────────
+    # The saved price is explicitly an estimate taken when Relay emitted the
+    # SWITCH. Broker fills remain the source of truth for an actual stop order.
+    current_entry = find_entry_details(TRADE_LOG_PATH, current_ticker)
+    current_snapshot = None
+    if current_entry is not None and STOP_LOSS_PCT is not None:
+        try:
+            current_snapshot = fetch_regular_session_snapshot(
+                current_ticker,
+                since_et=(
+                    current_entry.checked_through_et or current_entry.time_et
+                ),
+            )
+        except Exception as ex:
+            logger.warning(f"Intraday stop data unavailable for {current_ticker}: {ex}")
+    stop_check = evaluate_stop(current_ticker, current_entry, current_snapshot)
+    _print_stop_panel(stop_check)
+
+    if stop_check.triggered:
+        reason = (
+            f"{current_ticker} session low ${stop_check.snapshot.session_low:.2f} "
+            f"touched the model stop ${current_entry.stop_price:.2f} "
+            f"from expected entry ${current_entry.price:.2f}; move model to CASH"
+        )
+        reset_edge_streak()
+        _print_decision_panel("STOP_LOSS", reason)
+        print("\n  → Model position after stop : CASH")
+        append_trade_log(
+            current_ticker,
+            "STOP_LOSS",
+            "CASH",
+            reason,
+            entry=current_entry,
+            session_low=stop_check.snapshot.session_low,
+            stop_status=stop_check.status,
+            stop_checked_through=stop_check.snapshot.last_time_et,
+        )
+        print(f"\n  Log saved → {TRADE_LOG_PATH}")
+        print()
+        return
 
     # ── 2. Market context ─────────────────────────────────────────────────────
     spy_trend = get_spy_trend()
@@ -523,19 +631,67 @@ def main():
         else:
             update_edge_streak(False)
 
-    print()
-    print("  ┌─────────────────────────────────────────────────────┐")
-    print(f"  │  DECISION :  *** {action:<5} ***                            │")
-    print(f"  │  {reason[:53]:<53}  │")
-    if len(reason) > 53:
-        print(f"  │  {reason[53:106]:<53}  │")
-    print("  └─────────────────────────────────────────────────────┘")
+    _print_decision_panel(action, reason)
 
     if action == "SWITCH":
         print(f"\n  → Consider switching to : {best_ticker}  (score {best_score:.3f})")
 
     # ── 12. Log ───────────────────────────────────────────────────────────────
-    append_trade_log(current_ticker, action, best_ticker, reason)
+    log_entry = current_entry
+    log_session_low = (
+        current_snapshot.session_low if current_snapshot is not None else None
+    )
+    log_stop_status = stop_check.status
+
+    if action == "SWITCH":
+        new_snapshot = None
+        try:
+            new_snapshot = fetch_regular_session_snapshot(best_ticker)
+        except Exception as ex:
+            logger.warning(f"Could not estimate entry for {best_ticker}: {ex}")
+
+        estimated_price = (
+            new_snapshot.last_price
+            if new_snapshot is not None
+            else float(data[best_ticker]["Close"].dropna().iloc[-1])
+        )
+        entry_time = (
+            new_snapshot.last_time_et
+            if new_snapshot is not None
+            else datetime.now(ZoneInfo("America/New_York"))
+        )
+        log_entry = EntryDetails(
+            ticker=best_ticker,
+            price=estimated_price,
+            time_et=entry_time,
+            stop_price=(
+                estimated_price * (1 + STOP_LOSS_PCT)
+                if STOP_LOSS_PCT is not None else None
+            ),
+            checked_through_et=entry_time,
+        )
+        log_session_low = None
+        log_stop_status = "ENTRY_ESTIMATE"
+        print(f"  Expected entry   : ${log_entry.price:.2f}")
+        if log_entry.stop_price is not None:
+            print(f"  6% model stop    : ${log_entry.stop_price:.2f}")
+
+    append_trade_log(
+        current_ticker,
+        action,
+        best_ticker,
+        reason,
+        entry=log_entry,
+        session_low=log_session_low,
+        stop_status=log_stop_status,
+        stop_checked_through=(
+            log_entry.checked_through_et
+            if action == "SWITCH" and log_entry is not None
+            else current_snapshot.last_time_et if current_snapshot is not None
+            else current_entry.checked_through_et if current_entry is not None
+            else None
+        ),
+    )
 
     print(f"\n  Log saved → {TRADE_LOG_PATH}")
     print()

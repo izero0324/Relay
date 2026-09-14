@@ -403,6 +403,10 @@ jobs:
 
                       ticker = switch_to
 
+                  elif action == "STOP_LOSS":
+
+                      ticker = "CASH"
+
                   elif current:
 
                       ticker = current
@@ -650,7 +654,7 @@ jobs:
       #
       # Top candidates
       # Current model position
-      # HOLD / SWITCH
+      # HOLD / SWITCH / STOP_LOSS
       # Switch target
       # Edge streak
       # Reason
@@ -1005,7 +1009,7 @@ jobs:
 
                   r"DECISION\s*:\s*\*{3}\s*"
 
-                  r"(HOLD|SWITCH)"
+                  r"(HOLD|SWITCH|STOP_LOSS)"
 
                   r"\s*\*{3}",
 
@@ -1067,6 +1071,7 @@ jobs:
               # ----------------------------------------------------
 
               reason = ""
+              risk_row = {}
 
 
               try:
@@ -1083,6 +1088,8 @@ jobs:
 
 
                   if history:
+
+                      risk_row = history[-1]
 
                       reason = (
                           history[-1].get(
@@ -1132,6 +1139,8 @@ jobs:
                   "HOLD": "\u2705",
 
                   "SWITCH": "\U0001F504",
+
+                  "STOP_LOSS": "\U0001F6D1",
 
               }.get(
 
@@ -1267,6 +1276,60 @@ jobs:
 
                   "",
 
+                  "\U0001F6E1 <b>6% MODEL STOP</b>",
+
+                  (
+                      "Expected entry : $"
+                      + html.escape(
+                          risk_row.get(
+                              "Expected_Entry_Price",
+                              "n/a",
+                          ) or "n/a"
+                      )
+                  ),
+
+                  (
+                      "Stop price     : $"
+                      + html.escape(
+                          risk_row.get(
+                              "Stop_Price",
+                              "n/a",
+                          ) or "n/a"
+                      )
+                  ),
+
+                  (
+                      "Session low    : $"
+                      + html.escape(
+                          risk_row.get(
+                              "Session_Low",
+                              "n/a",
+                          ) or "n/a"
+                      )
+                  ),
+
+                  (
+                      "Status         : "
+                      + html.escape(
+                          risk_row.get(
+                              "Stop_Status",
+                              "n/a",
+                          ) or "n/a"
+                      )
+                  ),
+
+                  (
+                      "Checked through: "
+                      + html.escape(
+                          risk_row.get(
+                              "Stop_Checked_Through_ET",
+                              "n/a",
+                          ) or "n/a"
+                      )
+                  ),
+
+                  "",
+
                   (
                       f"{action_icon} "
                       "<b>DECISION: "
@@ -1306,6 +1369,14 @@ jobs:
 
                       + ")"
 
+                  )
+
+              elif action == "STOP_LOSS":
+
+                  lines.append(
+                      "\u2192 "
+                      + html.escape(current)
+                      + " \u2192 CASH"
                   )
 
 

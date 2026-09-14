@@ -1,8 +1,8 @@
 # Daily Long-Only Rotation Scanner
 
 A daily Hold/Switch decision system for a concentrated long-only portfolio.
-Run each day before US market closed (NYSE close 16:00 ET; target 15:35 ET) to get a scored ranking of
-candidates and a clear HOLD or SWITCH recommendation.
+Run each day before the US market closes (NYSE close 16:00 ET; target 15:30 ET)
+to get a scored ranking and a HOLD, SWITCH, or STOP_LOSS recommendation.
 
 ---
 
@@ -42,8 +42,9 @@ python main.py CASH
 3. Applies liquidity filter (avg volume ??? 1M, price ??? $5)
 4. Pre-filters stocks using the enabled price-signal weights → keeps top 60
 5. Full-scores those 60 with all 4 signals (Event + Flow require per-ticker calls)
-6. Prints ranked table + HOLD/SWITCH decision
-7. Appends a row to `trade_log.csv`
+6. Checks the current model holding against its estimated-entry 6% stop
+7. Prints ranked table + HOLD/SWITCH decision (or STOP_LOSS → CASH)
+8. Appends a row to `trade_log.csv`
 
 ---
 
@@ -69,9 +70,10 @@ python main.py CASH
 
 | Parameter | Default | What it controls |
 |---|---|---|
-| `SWITCH_THRESHOLD` | 0.15 | How much better a candidate must be to trigger a switch |
+| `SWITCH_THRESHOLD` | 0.18 | How much better a candidate must be to trigger a switch |
 | `WEIGHTS` | Momentum 61.54%, Event 38.46% | Relative importance of each signal; Volume/Flow remain diagnostic only |
-| `MIN_AVG_VOLUME` | 1,000,000 | Liquidity filter (shares/day) |
+| `MIN_AVG_VOLUME` | 2,000,000 | Liquidity filter (shares/day) |
+| `STOP_LOSS_PCT` | -6% | Model stop measured from Relay's estimated entry price |
 | `PRE_FILTER_TOP_N` | 60 | How many stocks get full scoring (speed vs coverage) |
 | `TOP_CANDIDATES` | 10 | Rows in the output table |
 
@@ -81,11 +83,20 @@ python main.py CASH
 
 Each run appends one row:
 
-| Date | Current_Position | Action | Switch_To | Reason | Outcome |
-|------|-----------------|--------|-----------|--------|---------|
-| 2025-01-15 | AAPL | SWITCH | NVDA | NVDA scores 0.731 vs... | +4.2% |
+| Date | Current_Position | Action | Switch_To | Expected_Entry_Price | Stop_Price | Session_Low | Stop_Status |
+|------|-----------------|--------|-----------|----------------------|------------|-------------|-------------|
+| 2025-01-15 | AAPL | SWITCH | NVDA | 125.50 | 117.97 | | ENTRY_ESTIMATE |
 
-Fill in **Outcome** at end of day. Over time this lets you identify which signals are actually predictive.
+On a SWITCH, the entry estimate is the latest regular-session one-minute price
+available when Relay runs. On later holding days, Relay checks every available
+regular-session minute since its last saved check, including the prior session's
+final 30 minutes after Relay ran. A touch records `STOP_LOSS → CASH` in model
+state.
+
+This is monitoring, not broker execution confirmation. Always base the real stop
+order on the broker's actual average fill; gaps and slippage can fill below 6%.
+Legacy positions without a recorded estimate remain unmonitored until the next
+Relay SWITCH rather than inheriting a guessed or stale cost basis.
 
 ---
 
