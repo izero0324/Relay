@@ -1383,6 +1383,22 @@ jobs:
 
                   )
 
+                  switch_stop_price = (
+                      risk_row.get(
+                          "Stop_Price",
+                          "",
+                      ) or ""
+                  ).strip()
+
+                  if switch_stop_price:
+
+                      lines.append(
+                          "\U0001F6E1 Stop price: $"
+                          + html.escape(
+                              switch_stop_price
+                          )
+                      )
+
               elif action == "STOP_LOSS":
 
                   lines.append(
