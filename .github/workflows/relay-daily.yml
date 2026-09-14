@@ -3,14 +3,23 @@ name: Relay Daily Scan
 on:
   # Normal NYSE day:
   # Two wake-up attempts improve reliability when GitHub's scheduler is
-  # delayed. Both target 15:30 ET; the state log prevents duplicate scans.
+  # delayed. Both target 15:30 ET, expressed in London local time here.
+  # London is normally five hours ahead of New York (20:08/20:26), but is
+  # four hours ahead during the short UK/US DST transition windows
+  # (19:08/19:26). The calendar check below accepts only today's valid pair.
   # Non-round minutes reduce contention with common cron schedules.
   schedule:
-    - cron: "8 15 * * 1-5"
-      timezone: "America/New_York"
+    - cron: "8 19 * * 1-5"
+      timezone: "Europe/London"
 
-    - cron: "26 15 * * 1-5"
-      timezone: "America/New_York"
+    - cron: "26 19 * * 1-5"
+      timezone: "Europe/London"
+
+    - cron: "8 20 * * 1-5"
+      timezone: "Europe/London"
+
+    - cron: "26 20 * * 1-5"
+      timezone: "Europe/London"
 
   # Manual test button
   workflow_dispatch:
@@ -149,9 +158,12 @@ jobs:
                       target - timedelta(minutes=4),
                   )
 
+                  london = ZoneInfo("Europe/London")
+
                   expected_crons = {
-                      f"{wake.minute} {wake.hour} * * 1-5"
+                      f"{wake_london.minute} {wake_london.hour} * * 1-5"
                       for wake in wake_times
+                      for wake_london in (wake.astimezone(london),)
                   }
 
                   correct_schedule = (
