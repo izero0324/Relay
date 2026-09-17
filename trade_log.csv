@@ -88,3 +88,4 @@ Date,Current_Position,Action,Switch_To,Reason,Outcome,Expected_Entry_Price,Entry
 2026-09-14,ORCL,SWITCH,BRK-B,Best candidate BRK-B scores 0.885 vs current ORCL at 0.195 (edge Δ=+0.690 exceeds threshold 0.180),,514.9100,2026-09-14T15:51:00-04:00,484.0154,,ENTRY_ESTIMATE,2026-09-14T15:51:00-04:00
 2026-09-16,BRK-B,HOLD,,Current BRK-B scores 0.833; best candidate CNC scores 0.875 (Δ=+0.042 ≤ threshold 0.180 — hold advantage),,514.9100,2026-09-14T15:51:00-04:00,484.0154,512.4100,ACTIVE,2026-09-15T15:59:00-04:00
 2026-09-16,BRK-B,HOLD,,Current BRK-B scores 0.885; best candidate VLO scores 0.883 (Δ=-0.002 ≤ threshold 0.180 — hold advantage),,514.9100,2026-09-14T15:51:00-04:00,484.0154,515.3000,ACTIVE,2026-09-16T15:59:00-04:00
+2026-09-17,BRK-B,HOLD,,"Edge to PSX exists, but BRK-B held only 1/2 scan days — min-hold enforced",,514.9100,2026-09-14T15:51:00-04:00,484.0154,508.7800,ACTIVE,2026-09-17T15:59:00-04:00
