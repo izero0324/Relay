@@ -1,0 +1,26 @@
+23:39:34  INFO      Trade log updated → trade_log.csv
+
+╔══════════════════════════════════════════════════════════╗
+║          DAILY LONG-ONLY ROTATION SCANNER                ║
+║  Tuesday, 22 September 2026  23:39                       ║
+╚══════════════════════════════════════════════════════════╝
+
+  Current holding : MPC
+
+  RISK / 6% STOP
+  Expected entry   : $424.36
+  Stop price       : $398.90
+  Price at scan    : $389.71
+  Session low      : $386.95
+  Stop status      : TRIGGERED — model position moves to CASH
+
+  ┌───────────────────────────────────────────────────────────┐
+  │ DECISION :  *** STOP_LOSS ***                             │
+  │ MPC session low $386.95 touched the model stop $398.90    │
+  │ from expected entry $424.36; move model to CASH           │
+  └───────────────────────────────────────────────────────────┘
+
+  → Model position after stop : CASH
+
+  Log saved → trade_log.csv
+
