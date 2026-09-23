@@ -92,3 +92,4 @@ Date,Current_Position,Action,Switch_To,Reason,Outcome,Expected_Entry_Price,Entry
 2026-09-18,BRK-B,SWITCH,MPC,Best candidate MPC scores 0.885 vs current BRK-B at 0.698 (edge Δ=+0.187 exceeds threshold 0.180),,424.3600,2026-09-18T15:59:00-04:00,398.8984,,ENTRY_ESTIMATE,2026-09-18T15:59:00-04:00
 2026-09-21,MPC,HOLD,,"Edge to ISRG exists, but MPC held only 0/2 scan days — min-hold enforced",,424.3600,2026-09-18T15:59:00-04:00,398.8984,399.5500,ACTIVE,2026-09-21T15:59:00-04:00
 2026-09-22,MPC,STOP_LOSS,CASH,MPC session low $386.95 touched the model stop $398.90 from expected entry $424.36; move model to CASH,,424.3600,2026-09-18T15:59:00-04:00,398.8984,386.9543,TRIGGERED,2026-09-22T15:59:00-04:00
+2026-09-23,CASH,SWITCH,DHR,Best candidate DHR scores 0.883 vs current CASH at 0.500 (edge Δ=+0.383 exceeds threshold 0.180),,221.7000,2026-09-23T15:59:00-04:00,208.3980,,ENTRY_ESTIMATE,2026-09-23T15:59:00-04:00
