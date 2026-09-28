@@ -95,3 +95,4 @@ Date,Current_Position,Action,Switch_To,Reason,Outcome,Expected_Entry_Price,Entry
 2026-09-23,CASH,SWITCH,DHR,Best candidate DHR scores 0.883 vs current CASH at 0.500 (edge Δ=+0.383 exceeds threshold 0.180),,221.7000,2026-09-23T15:59:00-04:00,208.3980,,ENTRY_ESTIMATE,2026-09-23T15:59:00-04:00
 2026-09-24,DHR,HOLD,,Current DHR scores 0.877; best candidate A scores 0.885 (Δ=+0.008 ≤ threshold 0.180 — hold advantage),,221.7000,2026-09-23T15:59:00-04:00,208.3980,219.0000,ACTIVE,2026-09-24T15:59:00-04:00
 2026-09-26,DHR,HOLD,,Current DHR scores 0.879; best candidate A scores 0.885 (Δ=+0.006 ≤ threshold 0.180 — hold advantage),,221.7000,2026-09-23T15:59:00-04:00,208.3980,221.6000,ACTIVE,2026-09-25T15:59:00-04:00
+2026-09-28,DHR,HOLD,,Current DHR scores 0.881; best candidate TER scores 0.876 (Δ=-0.005 ≤ threshold 0.180 — hold advantage),,221.7000,2026-09-23T15:59:00-04:00,208.3980,222.1000,ACTIVE,2026-09-28T15:59:00-04:00
