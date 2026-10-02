@@ -1,7 +1,7 @@
 """
 main.py — Daily Rotation Scanner
 ─────────────────────────────────
-Run each morning before market open:
+Run during the final 30 minutes of the regular U.S. session:
 
   python main.py                    # prompts for current ticker
   python main.py AAPL               # pass ticker as argument
@@ -21,10 +21,11 @@ import logging
 import os
 import sys
 import textwrap
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+import pandas_market_calendars as mcal
 import yfinance as yf
 
 from config import (
@@ -35,6 +36,8 @@ from config import (
     MIN_PRICE,
     PRE_FILTER_TOP_N,
     SCANNER_STATE_PATH,
+    SHADOW_ATR_MULTIPLIER,
+    SHADOW_ATR_PERIOD,
     STOP_LOSS_PCT,
     SWITCH_CONFIRM_DAYS,
     TOP_CANDIDATES,
@@ -46,8 +49,11 @@ from position_risk import (
     TRADE_LOG_FIELDS,
     EntryDetails,
     StopCheck,
+    calculate_atr_pct,
+    calculate_shadow_stop_price,
     ensure_trade_log_schema,
     evaluate_stop,
+    evaluate_shadow_stop,
     fetch_regular_session_snapshot,
     find_entry_details,
 )
@@ -223,6 +229,7 @@ def append_trade_log(
     entry: EntryDetails | None = None,
     session_low: float | None = None,
     stop_status: str = "",
+    shadow_stop_status: str = "",
     stop_checked_through: datetime | None = None,
 ) -> None:
     """Append one row, migrating older logs to the risk-aware schema."""
@@ -250,8 +257,17 @@ def append_trade_log(
                 f"{entry.stop_price:.4f}"
                 if entry and entry.stop_price is not None else ""
             ),
+            "ATR14_Pct": (
+                f"{entry.atr14_pct:.6f}"
+                if entry and entry.atr14_pct is not None else ""
+            ),
+            "Shadow_Stop_Price": (
+                f"{entry.shadow_stop_price:.4f}"
+                if entry and entry.shadow_stop_price is not None else ""
+            ),
             "Session_Low": f"{session_low:.4f}" if session_low is not None else "",
             "Stop_Status": stop_status,
+            "Shadow_Stop_Status": shadow_stop_status,
             "Stop_Checked_Through_ET": (
                 stop_checked_through.isoformat() if stop_checked_through else ""
             ),
@@ -259,12 +275,19 @@ def append_trade_log(
     logger.info(f"Trade log updated → {TRADE_LOG_PATH}")
 
 
-def _print_stop_panel(check: StopCheck) -> None:
-    print("\n  RISK / 6% STOP")
+def _print_stop_panel(check: StopCheck, shadow_status: str) -> None:
+    print("\n  RISK STOPS")
     if check.entry:
         print(f"  Expected entry   : ${check.entry.price:.2f}")
         if check.entry.stop_price is not None:
-            print(f"  Stop price       : ${check.entry.stop_price:.2f}")
+            print(f"  Hard stop        : ${check.entry.stop_price:.2f} (executes)")
+        if check.entry.atr14_pct is not None:
+            print(f"  Entry ATR14      : {check.entry.atr14_pct:.2%}")
+        if check.entry.shadow_stop_price is not None:
+            print(
+                f"  Shadow stop      : ${check.entry.shadow_stop_price:.2f} "
+                f"(max 6%, {SHADOW_ATR_MULTIPLIER:g}×ATR14; monitor only)"
+            )
     else:
         print("  Expected entry   : unavailable (legacy/manual position)")
 
@@ -280,7 +303,17 @@ def _print_stop_panel(check: StopCheck) -> None:
         "DISABLED": "DISABLED — STOP_LOSS_PCT is None",
         "CASH": "N/A — model position is CASH",
     }
-    print(f"  Stop status      : {labels.get(check.status, check.status)}")
+    print(f"  Hard status      : {labels.get(check.status, check.status)}")
+    shadow_labels = {
+        "ACTIVE": "ACTIVE — not touched since last check",
+        "TRIGGERED": "TRIGGERED — observation only; no model action",
+        "UNAVAILABLE": "UNAVAILABLE — created on the next recorded SWITCH",
+        "NO_SESSION_DATA": "UNAVAILABLE — no new regular-session minute data",
+    }
+    print(
+        "  Shadow status    : "
+        f"{shadow_labels.get(shadow_status, shadow_status)}"
+    )
 
 
 def _print_decision_panel(action: str, reason: str) -> None:
@@ -298,11 +331,24 @@ def _print_decision_panel(action: str, reason: str) -> None:
 # Hold discipline (mirrors the backtest's MIN_HOLD_DAYS + SWITCH_CONFIRM_DAYS)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def scans_held(current: str) -> int:
+def _nyse_sessions(start: date, end: date) -> list[date]:
+    """NYSE session dates in the inclusive range; empty for an invalid range."""
+    if start > end:
+        return []
+    schedule = mcal.get_calendar("NYSE").schedule(
+        start_date=start,
+        end_date=end,
+    )
+    return [timestamp.date() for timestamp in schedule.index]
+
+
+def trading_days_held(current: str, as_of: date | None = None) -> int:
     """
-    How many prior scan dates (from trade_log.csv) the current ticker has
-    already been the holding, counting back from the most recent entries.
-    Today's own rows are ignored. Returns 0 if unknown/new.
+    Count completed NYSE sessions after the current position's recorded SWITCH.
+
+    The current session is excluded, so a Monday entry has one completed
+    trading day at Wednesday's scan even if Tuesday's scan never ran.
+    Returns 0 for an unknown/manual entry.
     """
     if current == "CASH" or not os.path.exists(TRADE_LOG_PATH):
         return 0
@@ -312,19 +358,33 @@ def scans_held(current: str) -> int:
     except Exception:
         return 0
 
-    today = date.today().isoformat()
-    dates: list[str] = []
-    for r in reversed(rows):
-        d = r.get("Date", "")
-        if d == today:
-            if r.get("Current_Position") != current:
-                break
-            continue  # today doesn't count as a day held
-        if r.get("Current_Position") != current:
+    ticker = current.strip().upper()
+    entry_date = None
+    for row in reversed(rows):
+        action = (row.get("Action") or "").strip().upper()
+        switch_to = (row.get("Switch_To") or "").strip().upper()
+        if action == "SWITCH" and switch_to == ticker:
+            try:
+                entry_date = date.fromisoformat(row.get("Date", ""))
+            except (TypeError, ValueError):
+                return 0
             break
-        if not dates or dates[-1] != d:
-            dates.append(d)
-    return len(dates)
+
+        # Stop once the reverse walk crosses out of this holding cycle.
+        row_current = (row.get("Current_Position") or "").strip().upper()
+        if action in {"SWITCH", "STOP_LOSS"} and row_current == ticker:
+            return 0
+
+    if entry_date is None:
+        return 0
+
+    today = as_of or datetime.now(ZoneInfo("America/New_York")).date()
+    return len(
+        _nyse_sessions(
+            entry_date + timedelta(days=1),
+            today - timedelta(days=1),
+        )
+    )
 
 
 def _load_state() -> dict:
@@ -343,23 +403,36 @@ def _save_state(state: dict) -> None:
         logger.warning(f"Could not save scanner state: {e}")
 
 
-def update_edge_streak(has_edge: bool) -> int:
+def update_edge_streak(has_edge: bool, as_of: date | None = None) -> int:
     """
-    Track how many CONSECUTIVE scan days the switch edge has persisted.
-    A day without an edge (or without a scan) resets the streak.
+    Track how many consecutive NYSE sessions the switch edge has persisted.
+    A session without an edge (or without a scan) resets the streak.
     Multiple scans on the same day count once.
     """
     state     = _load_state()
-    today     = date.today().isoformat()
+    today_date = as_of or datetime.now(ZoneInfo("America/New_York")).date()
+    today     = today_date.isoformat()
     prev_scan = state.get("last_scan_date")
     prev_edge = state.get("last_edge_date")
     streak    = int(state.get("edge_streak", 0))
 
+    prior_sessions = _nyse_sessions(
+        today_date - timedelta(days=10),
+        today_date - timedelta(days=1),
+    )
+    previous_session = (
+        prior_sessions[-1].isoformat()
+        if prior_sessions else None
+    )
+
     if has_edge:
         if prev_edge == today:
             pass                                   # already counted today
-        elif prev_scan is not None and prev_scan == prev_edge:
-            streak += 1                            # previous scan day also had it
+        elif (
+            prev_scan == previous_session
+            and prev_edge == previous_session
+        ):
+            streak += 1                            # prior NYSE session had it
         else:
             streak = 1
         state["last_edge_date"] = today
@@ -446,7 +519,8 @@ def main():
         except Exception as ex:
             logger.warning(f"Intraday stop data unavailable for {current_ticker}: {ex}")
     stop_check = evaluate_stop(current_ticker, current_entry, current_snapshot)
-    _print_stop_panel(stop_check)
+    shadow_stop_status = evaluate_shadow_stop(current_entry, current_snapshot)
+    _print_stop_panel(stop_check, shadow_stop_status)
 
     if stop_check.triggered:
         reason = (
@@ -465,6 +539,7 @@ def main():
             entry=current_entry,
             session_low=stop_check.snapshot.session_low,
             stop_status=stop_check.status,
+            shadow_stop_status=shadow_stop_status,
             stop_checked_through=stop_check.snapshot.last_time_et,
         )
         print(f"\n  Log saved → {TRADE_LOG_PATH}")
@@ -606,12 +681,12 @@ def main():
 
     # Min-hold discipline (mirrors backtest MIN_HOLD_DAYS; CASH is exempt)
     if action == "SWITCH" and current_ticker != "CASH":
-        held = scans_held(current_ticker)
+        held = trading_days_held(current_ticker)
         if held < MIN_HOLD_DAYS:
             action = "HOLD"
             reason = (
                 f"Edge to {best_ticker} exists, but {current_ticker} held only "
-                f"{held}/{MIN_HOLD_DAYS} scan days — min-hold enforced"
+                f"{held}/{MIN_HOLD_DAYS} completed NYSE days — min-hold enforced"
             )
             reset_edge_streak()
 
@@ -660,6 +735,10 @@ def main():
             if new_snapshot is not None
             else datetime.now(ZoneInfo("America/New_York"))
         )
+        entry_atr14_pct = calculate_atr_pct(
+            data[best_ticker],
+            SHADOW_ATR_PERIOD,
+        )
         log_entry = EntryDetails(
             ticker=best_ticker,
             price=estimated_price,
@@ -668,13 +747,32 @@ def main():
                 estimated_price * (1 + STOP_LOSS_PCT)
                 if STOP_LOSS_PCT is not None else None
             ),
+            atr14_pct=entry_atr14_pct,
+            shadow_stop_price=calculate_shadow_stop_price(
+                estimated_price,
+                STOP_LOSS_PCT,
+                entry_atr14_pct,
+                SHADOW_ATR_MULTIPLIER,
+            ),
             checked_through_et=entry_time,
         )
         log_session_low = None
         log_stop_status = "ENTRY_ESTIMATE"
+        shadow_stop_status = (
+            "ENTRY_ESTIMATE"
+            if log_entry.shadow_stop_price is not None
+            else "UNAVAILABLE"
+        )
         print(f"  Expected entry   : ${log_entry.price:.2f}")
         if log_entry.stop_price is not None:
             print(f"  6% model stop    : ${log_entry.stop_price:.2f}")
+        if log_entry.atr14_pct is not None:
+            print(f"  Entry ATR14      : {log_entry.atr14_pct:.2%}")
+        if log_entry.shadow_stop_price is not None:
+            print(
+                f"  Shadow stop      : ${log_entry.shadow_stop_price:.2f} "
+                "(monitor only)"
+            )
 
     append_trade_log(
         current_ticker,
@@ -684,6 +782,7 @@ def main():
         entry=log_entry,
         session_low=log_session_low,
         stop_status=log_stop_status,
+        shadow_stop_status=shadow_stop_status,
         stop_checked_through=(
             log_entry.checked_through_et
             if action == "SWITCH" and log_entry is not None

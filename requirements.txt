@@ -8,3 +8,4 @@ lxml>=4.9.0          # required by pandas.read_html for Wikipedia scraping
 html5lib>=1.1        # fallback HTML parser for read_html
 requests>=2.31.0
 matplotlib>=3.7.0    # optional — for backtest_chart.png (pip install matplotlib)
+pandas_market_calendars>=4.4.0  # NYSE sessions for live hold/cooldown rules

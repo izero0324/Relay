@@ -29,11 +29,11 @@ BACKTEST_ACTIVE_SIGNALS = ("momentum", "event")
 # Expressed in NORMALIZED momentum+volume units (the units the backtest
 # validates). The live scanner scales it by the momentum+volume weight so a
 # raw composite delta means the same thing in both places.
-SWITCH_THRESHOLD = 0.18
+SWITCH_THRESHOLD = 0.16
 
 # ── Switch confirmation ───────────────────────────────────────────────────────
-# The edge must exceed the threshold on N consecutive scans/days before a
-# switch fires. Filters one-day score noise (volume spikes etc.).
+# The edge must exceed the threshold on N consecutive NYSE sessions before a
+# switch fires. A missed scheduled scan interrupts confirmation.
 # Set to 1 to disable. Entries from CASH are never delayed.
 SWITCH_CONFIRM_DAYS = 1
 
@@ -49,7 +49,7 @@ CROSS_SECTIONAL_RANK = True
 SCANNER_STATE_PATH = "scanner_state.json"
 
 # ── Minimum hold period ───────────────────────────────────────────────────────
-MIN_HOLD_DAYS = 2
+MIN_HOLD_DAYS = 1
 
 # ── Per-trade stop loss ───────────────────────────────────────────────────────
 # Live scanner: compare today's regular-session minute-bar low with the stop
@@ -57,6 +57,13 @@ MIN_HOLD_DAYS = 2
 # backtest.py still uses its documented daily close / next-open approximation.
 # Set to None to disable. -0.06 = -6% model stop.
 STOP_LOSS_PCT = -0.06
+
+# Monitoring-only adaptive stop. This never changes the model action: the
+# fixed 6% STOP_LOSS_PCT above remains the executable stop. Relay records and
+# displays this wider level so it can be evaluated with live observations.
+# Distance from entry = max(abs(STOP_LOSS_PCT), SHADOW_ATR_MULTIPLIER × ATR14%).
+SHADOW_ATR_PERIOD = 14
+SHADOW_ATR_MULTIPLIER = 2.0
 
 # ── Regime filter ─────────────────────────────────────────────────────────────
 REGIME_FILTER_ENABLED = True

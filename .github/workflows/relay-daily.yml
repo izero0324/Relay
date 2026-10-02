@@ -65,7 +65,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pandas_market_calendars
 
 
       # ============================================================
@@ -1115,6 +1114,29 @@ jobs:
                   pass
 
 
+              atr14_display = "n/a"
+
+
+              try:
+
+                  atr14_raw = (
+                      risk_row.get(
+                          "ATR14_Pct",
+                          "",
+                      ) or ""
+                  ).strip()
+
+                  if atr14_raw:
+
+                      atr14_display = (
+                          f"{float(atr14_raw):.2%}"
+                      )
+
+              except Exception:
+
+                  pass
+
+
               # ----------------------------------------------------
               # Edge streak
               # ----------------------------------------------------
@@ -1288,7 +1310,7 @@ jobs:
 
                   "",
 
-                  "\U0001F6E1 <b>6% MODEL STOP</b>",
+                  "\U0001F6E1 <b>RISK STOPS</b>",
 
                   (
                       "Expected entry : $"
@@ -1301,13 +1323,31 @@ jobs:
                   ),
 
                   (
-                      "Stop price     : $"
+                      "Hard stop (6%): $"
                       + html.escape(
                           risk_row.get(
                               "Stop_Price",
                               "n/a",
                           ) or "n/a"
                       )
+                  ),
+
+                  (
+                      "Entry ATR14   : "
+                      + html.escape(
+                          atr14_display
+                      )
+                  ),
+
+                  (
+                      "Shadow stop   : $"
+                      + html.escape(
+                          risk_row.get(
+                              "Shadow_Stop_Price",
+                              "n/a",
+                          ) or "n/a"
+                      )
+                      + " (monitor only)"
                   ),
 
                   (
@@ -1321,10 +1361,20 @@ jobs:
                   ),
 
                   (
-                      "Status         : "
+                      "Hard status    : "
                       + html.escape(
                           risk_row.get(
                               "Stop_Status",
+                              "n/a",
+                          ) or "n/a"
+                      )
+                  ),
+
+                  (
+                      "Shadow status  : "
+                      + html.escape(
+                          risk_row.get(
+                              "Shadow_Stop_Status",
                               "n/a",
                           ) or "n/a"
                       )
@@ -1397,6 +1447,23 @@ jobs:
                           + html.escape(
                               switch_stop_price
                           )
+                      )
+
+                  switch_shadow_price = (
+                      risk_row.get(
+                          "Shadow_Stop_Price",
+                          "",
+                      ) or ""
+                  ).strip()
+
+                  if switch_shadow_price:
+
+                      lines.append(
+                          "\U0001F441 Shadow stop: $"
+                          + html.escape(
+                              switch_shadow_price
+                          )
+                          + " (monitor only)"
                       )
 
               elif action == "STOP_LOSS":

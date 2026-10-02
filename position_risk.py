@@ -26,8 +26,11 @@ TRADE_LOG_FIELDS = [
     "Expected_Entry_Price",
     "Entry_Time_ET",
     "Stop_Price",
+    "ATR14_Pct",
+    "Shadow_Stop_Price",
     "Session_Low",
     "Stop_Status",
+    "Shadow_Stop_Status",
     "Stop_Checked_Through_ET",
 ]
 
@@ -38,6 +41,8 @@ class EntryDetails:
     price: float
     time_et: Optional[datetime]
     stop_price: Optional[float]
+    atr14_pct: Optional[float] = None
+    shadow_stop_price: Optional[float] = None
     checked_through_et: Optional[datetime] = None
 
 
@@ -75,6 +80,65 @@ def _datetime_or_none(value) -> Optional[datetime]:
         return parsed.astimezone(NEW_YORK)
     except (TypeError, ValueError):
         return None
+
+
+def calculate_atr_pct(hist: pd.DataFrame, period: int = 14) -> Optional[float]:
+    """Return the latest simple ATR as a fraction of the latest close."""
+    required = {"High", "Low", "Close"}
+    if period < 1 or hist is None or not required.issubset(hist.columns):
+        return None
+    frame = hist[list(required)].dropna().copy()
+    if len(frame) < period + 1:
+        return None
+    prior_close = frame["Close"].shift(1)
+    true_range = pd.concat(
+        [
+            frame["High"] - frame["Low"],
+            (frame["High"] - prior_close).abs(),
+            (frame["Low"] - prior_close).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    latest_close = float(frame["Close"].iloc[-1])
+    atr = float(true_range.tail(period).mean())
+    if latest_close <= 0 or pd.isna(atr) or atr <= 0:
+        return None
+    return atr / latest_close
+
+
+def calculate_shadow_stop_price(
+    entry_price: float,
+    hard_stop_pct: float,
+    atr_pct: Optional[float],
+    atr_multiplier: float = 2.0,
+) -> Optional[float]:
+    """Monitoring stop: entry × (1 - max(hard distance, ATR distance))."""
+    if (
+        entry_price <= 0
+        or hard_stop_pct is None
+        or atr_pct is None
+        or atr_pct <= 0
+    ):
+        return None
+    hard_distance = abs(float(hard_stop_pct))
+    atr_distance = atr_multiplier * atr_pct
+    return entry_price * (1 - max(hard_distance, atr_distance))
+
+
+def evaluate_shadow_stop(
+    entry: Optional[EntryDetails],
+    snapshot: Optional[MarketSnapshot],
+) -> str:
+    """Evaluate the shadow line without affecting the executable stop."""
+    if entry is None or entry.shadow_stop_price is None:
+        return "UNAVAILABLE"
+    if snapshot is None:
+        return "NO_SESSION_DATA"
+    return (
+        "TRIGGERED"
+        if snapshot.session_low <= entry.shadow_stop_price
+        else "ACTIVE"
+    )
 
 
 def read_trade_log(path: str) -> tuple[list[str], list[dict]]:
@@ -160,6 +224,8 @@ def find_entry_details(path: str, current_ticker: str) -> Optional[EntryDetails]
             price=price,
             time_et=_datetime_or_none(row.get("Entry_Time_ET")),
             stop_price=stop_price,
+            atr14_pct=_float_or_none(row.get("ATR14_Pct")),
+            shadow_stop_price=_float_or_none(row.get("Shadow_Stop_Price")),
             checked_through_et=_datetime_or_none(
                 row.get("Stop_Checked_Through_ET")
             ),

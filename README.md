@@ -70,10 +70,13 @@ python main.py CASH
 
 | Parameter | Default | What it controls |
 |---|---|---|
-| `SWITCH_THRESHOLD` | 0.18 | How much better a candidate must be to trigger a switch |
+| `SWITCH_THRESHOLD` | 0.16 | How much better a candidate must be to trigger a switch |
 | `WEIGHTS` | Momentum 61.54%, Event 38.46% | Relative importance of each signal; Volume/Flow remain diagnostic only |
+| `MIN_HOLD_DAYS` | 1 | Minimum completed NYSE trading day before switching to another stock |
 | `MIN_AVG_VOLUME` | 2,000,000 | Liquidity filter (shares/day) |
 | `STOP_LOSS_PCT` | -6% | Model stop measured from Relay's estimated entry price |
+| `SHADOW_ATR_PERIOD` | 14 | ATR lookback used by the monitoring-only shadow stop |
+| `SHADOW_ATR_MULTIPLIER` | 2.0 | Shadow distance is the wider of 6% and 2×ATR14 |
 | `PRE_FILTER_TOP_N` | 60 | How many stocks get full scoring (speed vs coverage) |
 | `TOP_CANDIDATES` | 10 | Rows in the output table |
 
@@ -83,9 +86,9 @@ python main.py CASH
 
 Each run appends one row:
 
-| Date | Current_Position | Action | Switch_To | Expected_Entry_Price | Stop_Price | Session_Low | Stop_Status |
-|------|-----------------|--------|-----------|----------------------|------------|-------------|-------------|
-| 2025-01-15 | AAPL | SWITCH | NVDA | 125.50 | 117.97 | | ENTRY_ESTIMATE |
+| Date | Current_Position | Action | Switch_To | Expected_Entry_Price | Stop_Price | ATR14_Pct | Shadow_Stop_Price | Session_Low | Stop_Status | Shadow_Stop_Status |
+|------|-----------------|--------|-----------|----------------------|------------|-----------|-------------------|-------------|-------------|--------------------|
+| 2025-01-15 | AAPL | SWITCH | NVDA | 125.50 | 117.97 | 0.040000 | 115.46 | | ENTRY_ESTIMATE | ENTRY_ESTIMATE |
 
 On a SWITCH, the entry estimate is the latest regular-session one-minute price
 available when Relay runs. On later holding days, Relay checks every available
@@ -97,6 +100,12 @@ This is monitoring, not broker execution confirmation. Always base the real stop
 order on the broker's actual average fill; gaps and slippage can fill below 6%.
 Legacy positions without a recorded estimate remain unmonitored until the next
 Relay SWITCH rather than inheriting a guessed or stale cost basis.
+
+The 6% `Stop_Price` remains the only stop that can emit `STOP_LOSS → CASH`.
+`Shadow_Stop_Price` is fixed when the model entry is recorded and uses
+`entry × (1 - max(6%, 2 × ATR14%))`. Its status is shown in terminal and
+Telegram and appended to the log for observation only; a shadow touch never
+changes the model position.
 
 ---
 
